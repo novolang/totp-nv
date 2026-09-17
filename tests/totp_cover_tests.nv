@@ -1,0 +1,219 @@
+// tests/totp_cover_tests.nv — the algorithms, the enrolment URI, and
+// the refusals as a set.
+//
+// RED ON PURPOSE, like every suite here: each assertion reaches `not
+// implemented: totp-nv.<module>.<fn>`.
+//
+// The three suites beside this one assert the published vectors.  This
+// one exists so that no public function ships without a written
+// expectation of what it answers, and so that the two places the
+// `otpauth://` format is under-specified have an assertion each rather
+// than a paragraph each.
+
+use std.test
+use std.bytes
+use totpalg
+use totpbase32
+use totperr
+use totpparams
+use totpuri
+
+// The twenty-byte secret every example in this package uses.
+fn a_secret() -> TotpSecret
+    match totpbase32.secret(bytes.from_str("12345678901234567890"))
+        Ok(s)  => s
+        Err(_) => TotpSecret { raw: bytes.zeros(0) }
+
+// A TOTP enrolment URI over the default parameters.
+fn a_uri(issuer: Str, account: Str) -> TotpUri
+    totpuri.uri(issuer, account, a_secret(), totpparams.default_params())
+
+@test
+fn test_the_three_algorithms_and_their_two_lengths() [io]
+    test.case("the digest lengths are crypto-nv's own constants")
+    test.assert_eq(totpalg.digest_bytes(TotpAlgSha1), 20)
+    test.assert_eq(totpalg.digest_bytes(TotpAlgSha256), 32)
+    test.assert_eq(totpalg.digest_bytes(TotpAlgSha512), 64)
+
+    test.case("the block sizes are what RFC 6238's seeds are repeated to")
+    test.assert_eq(totpalg.block_bytes(TotpAlgSha1), 64)
+    test.assert_eq(totpalg.block_bytes(TotpAlgSha256), 64)
+    test.assert_eq(totpalg.block_bytes(TotpAlgSha512), 128)
+
+    test.case("SHA-1 is the default, and that is a deliberate choice")
+    test.assert_eq_str(totpalg.alg_name(totpalg.default_algorithm()), "SHA1")
+
+@test
+fn test_the_algorithm_names_are_the_uris_and_not_the_rfcs() [io]
+    // The Key Uri Format writes SHA1 where the RFC writes SHA-1, and
+    // an authenticator reading a hyphen does not recognise it.
+    test.case("no hyphen on the way out")
+    test.assert_eq_str(totpalg.alg_name(TotpAlgSha1), "SHA1")
+    test.assert_eq_str(totpalg.alg_name(TotpAlgSha256), "SHA256")
+    test.assert_eq_str(totpalg.alg_name(TotpAlgSha512), "SHA512")
+
+    test.case("and case and hyphen both accepted on the way in")
+    match totpalg.alg_named("sha256")
+        Err(e) => test.fail(e.message())
+        Ok(a)  => test.assert_eq_str(totpalg.alg_name(a), "SHA256")
+
+    match totpalg.alg_named("SHA-512")
+        Err(e) => test.fail(e.message())
+        Ok(a)  => test.assert_eq_str(totpalg.alg_name(a), "SHA512")
+
+    test.case("an algorithm nobody implements carries the text as written")
+    match totpalg.alg_named("SHA3-256")
+        Ok(_)  => test.fail("this package computes three algorithms and no more")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "uri-unknown-algorithm")
+            test.assert(totperr.is_config_fault(e))
+
+@test
+fn test_the_uri_is_written_with_every_parameter() [io]
+    // An authenticator that guesses a default that is not this one
+    // produces codes nobody accepts, so nothing is left out.
+    test.case("the whole string, parameters in the order this package writes")
+    test.assert_eq_str(totpuri.format(a_uri("Example", "alice")),
+        "otpauth://totp/Example:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example&algorithm=SHA1&digits=6&period=30")
+
+    test.case("the secret is written without base32 padding")
+    test.assert(str.contains(totpuri.format(a_uri("Example", "alice")),
+                             "secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&"))
+
+    test.case("a counter-based URI names its counter and no period")
+    let h = totpuri.hotp_uri("Example", "alice", a_secret(),
+                             totpparams.default_params(), 0)
+    test.assert(totpuri.is_hotp(h))
+    test.assert_eq(h.counter, 0)
+    test.assert(str.starts_with(totpuri.format(h), "otpauth://hotp/"))
+
+    test.case("and a time-based one is not a counter-based one")
+    let t = a_uri("Example", "alice")
+    test.assert(not totpuri.is_hotp(t))
+    test.assert_eq(t.counter, totpuri.TOTP_URI_NO_COUNTER)
+    test.assert(str.starts_with(totpuri.format(t),
+                                totpuri.TOTP_URI_SCHEME + "://"
+                                + totpuri.TOTP_URI_TYPE_TOTP + "/"))
+
+@test
+fn test_the_label_is_the_first_under_specified_place() [io]
+    // A space and a colon inside a label are the two characters that
+    // decide whether a URI round-trips.
+    test.case("a space is percent-encoded, never written as a plus")
+    test.assert_eq_str(totpuri.label(a_uri("ACME Co", "alice")), "ACME%20Co:alice")
+
+    test.case("the separator is a literal colon and a colon in the data is not")
+    test.assert_eq_str(totpuri.label(a_uri("Example", "a:b")), "Example:a%3Ab")
+
+    test.case("no issuer means the label is the account alone")
+    test.assert_eq_str(totpuri.label(a_uri("", "alice")), "alice")
+
+    test.case("and what was encoded comes back decoded")
+    match totpuri.parse(totpuri.format(a_uri("ACME Co", "alice@example.com")))
+        Err(e) => test.fail(e.message())
+        Ok(u)  =>
+            test.assert_eq_str(u.issuer, "ACME Co")
+            test.assert_eq_str(u.account, "alice@example.com")
+
+@test
+fn test_the_issuer_written_twice_is_the_second() [io]
+    // The label may carry the issuer and so may the `issuer`
+    // parameter, and nothing says what to do when they disagree.
+    // This package prefers the parameter and refuses neither.
+    test.case("the parameter wins when the two disagree")
+    match totpuri.parse("otpauth://totp/Foo:alice?secret=GEZDGNBVGY3TQOJQ&issuer=Bar")
+        Err(e) => test.fail(e.message())
+        Ok(u)  =>
+            test.assert_eq_str(u.issuer, "Bar")
+            test.assert_eq_str(u.account, "alice")
+
+    test.case("the label's prefix is used when there is no parameter")
+    match totpuri.parse("otpauth://totp/Foo:alice?secret=GEZDGNBVGY3TQOJQ")
+        Err(e) => test.fail(e.message())
+        Ok(u)  => test.assert_eq_str(u.issuer, "Foo")
+
+    test.case("and neither leaves the issuer empty rather than refusing")
+    match totpuri.parse("otpauth://totp/alice?secret=GEZDGNBVGY3TQOJQ")
+        Err(e) => test.fail(e.message())
+        Ok(u)  =>
+            test.assert_eq_str(u.issuer, "")
+            test.assert_eq_str(u.account, "alice")
+
+@test
+fn test_parsing_fills_the_defaults_and_names_what_it_cannot_read() [io]
+    test.case("a URI that names only the secret gets this package's defaults")
+    match totpuri.parse("otpauth://totp/alice?secret=GEZDGNBVGY3TQOJQ")
+        Err(e) => test.fail(e.message())
+        Ok(u)  =>
+            test.assert_eq(u.params.digits, totpparams.TOTP_DIGITS_DEFAULT)
+            test.assert_eq(u.params.step_seconds,
+                           totpparams.TOTP_STEP_DEFAULT_SECONDS)
+            test.assert_eq_str(totpalg.alg_name(u.params.algorithm), "SHA1")
+            test.assert_eq(bytes.len(totpbase32.secret_bytes(u.secret)), 10)
+
+    test.case("the parameters it does name are read")
+    match totpuri.parse("otpauth://totp/alice?secret=GEZDGNBVGY3TQOJQ&digits=8&period=60&algorithm=SHA256")
+        Err(e) => test.fail(e.message())
+        Ok(u)  =>
+            test.assert_eq(u.params.digits, 8)
+            test.assert_eq(u.params.step_seconds, 60)
+            test.assert_eq_str(totpalg.alg_name(u.params.algorithm), "SHA256")
+
+    test.case("a scheme that is not otpauth stops in the scheme")
+    match totpuri.parse("https://totp/alice?secret=GEZDGNBVGY3TQOJQ")
+        Ok(_)  => test.fail("only otpauth:// is an enrolment URI")
+        Err(e) => test.assert_eq_str(totperr.code(e), "uri-malformed")
+
+    test.case("a URI with no secret stops in the secret, not in the query")
+    match totpuri.parse("otpauth://totp/alice?issuer=Example")
+        Ok(_)  => test.fail("there is nothing without a secret")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "uri-malformed")
+            test.assert(totperr.is_config_fault(e))
+
+    test.case("a secret that is not base32 keeps base32's own refusal")
+    match totpuri.parse("otpauth://totp/alice?secret=GEZDG1BV")
+        Ok(_)  => test.fail("'1' is not in the alphabet")
+        Err(e) => test.assert_eq_str(totperr.code(e), "secret-not-base32")
+
+@test
+fn test_every_refusal_falls_in_exactly_one_class() [io]
+    // A deployment that alerts on a configuration fault, counts a user
+    // event and fails a test on a programming mistake needs the three
+    // to be disjoint.
+    test.case("a configuration fault is not a user event")
+    let conf = TotpSecretEmpty
+    test.assert(totperr.is_config_fault(conf))
+    test.assert(not totperr.is_user_fault(conf))
+    test.assert(not totperr.is_program_fault(conf))
+
+    test.case("a mistyped code is a user event and nothing else")
+    let typed = TotpCodeWrongLength(len: 5, want: 6)
+    test.assert(totperr.is_user_fault(typed))
+    test.assert(not totperr.is_config_fault(typed))
+    test.assert(not totperr.is_program_fault(typed))
+
+    test.case("a bad argument is a programming mistake and nothing else")
+    let bug = TotpDigitsOutOfRange(digits: 9, lo: 6, hi: 8)
+    test.assert(totperr.is_program_fault(bug))
+    test.assert(not totperr.is_config_fault(bug))
+    test.assert(not totperr.is_user_fault(bug))
+
+    test.case("the tokens are stable and one per arm")
+    test.assert_eq_str(totperr.code(TotpSecretEmpty), "secret-empty")
+    test.assert_eq_str(totperr.code(TotpSecretTruncated(len: 1)), "secret-truncated")
+    test.assert_eq_str(totperr.code(TotpBufferWrong(len: 4, want: 10)), "buffer-wrong")
+    test.assert_eq_str(totperr.code(TotpStepNotPositive(step: 0)), "step-not-positive")
+    test.assert_eq_str(totperr.code(TotpWindowNegative(steps_back: -1, steps_ahead: 0)),
+                       "window-negative")
+    test.assert_eq_str(totperr.code(TotpUriMalformed(at: 0, what: "scheme")),
+                       "uri-malformed")
+
+    test.case("an offset is a real position or -1, never a plausible zero")
+    test.assert_eq(totperr.offset(TotpCodeNotDigits(at: 5, found: "a")), 5)
+    test.assert_eq(totperr.offset(TotpUriMalformed(at: 0, what: "scheme")), 0)
+    test.assert_eq(totperr.offset(TotpSecretTruncated(len: 1)), -1)
+
+    test.case("and every arm can say one line about itself")
+    test.assert(str.len(TotpSecretEmpty.message()) > 0)
+    test.assert(str.len(TotpDigitsOutOfRange(digits: 9, lo: 6, hi: 8).message()) > 0)

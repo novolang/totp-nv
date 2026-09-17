@@ -1,0 +1,322 @@
+// totpparams — everything a code depends on besides the secret and
+// the time, as one value.
+//
+// FOUR NUMBERS AND A HASH.  A one-time password is decided by the
+// secret, the counter, the algorithm, the digit count, and — for TOTP
+// — the time step and the epoch the steps are counted from.  Every
+// one of those has to agree between the server and the authenticator,
+// or the user sees six digits that are never right.  They travel
+// together in the enrolment URI, so they travel together here: a
+// `TotpParams` is what `totpuri` parses into and what every other
+// function in this package takes.
+//
+// A pile of optional arguments would spread the same five values over
+// every call site, and the twelfth call site in a codebase has
+// drifted from the first without anybody being able to see it.  One
+// value has a definition, a place in the source and a diff when it
+// changes.
+//
+// WHAT AUTHENTICATORS ACTUALLY ACCEPT.  The Key Uri Format admits 6
+// or 8 digits and a period in seconds.  Google Authenticator ignores
+// the `digits` and `period` parameters on some platforms and shows
+// six digits on a thirty second step whatever the URI said.  So this
+// package admits 6 to 8 and refuses everything else — a `digits` of
+// 9 is not a number an authenticator will ever agree with — and its
+// defaults are the interoperable ones.
+//
+// THE VERIFICATION WINDOW IS TWO NUMBERS, NOT ONE.  A clock that is
+// behind and a clock that is ahead are different risks.  Steps
+// BACKWARD accept a code the user read a moment ago and typed slowly,
+// which is the ordinary case RFC 6238 § 5.2 is about.  Steps FORWARD
+// accept a code that has not been shown yet, which only helps a
+// client whose clock runs fast — and it widens the interval in which
+// a code a phishing site captured is still worth something.  A
+// package that published one `window: Int` would be deciding for
+// every deployment that the two are the same size.
+
+// What a code depends on besides the secret and the time.
+//
+// A plain struct rather than a `@value` one because it is a `Result`
+// payload — `params` and `with_digits` both answer one — and a
+// `@value` struct cannot be one (E2015).
+//
+// Every field is readable, so a service can print what it is enforcing
+// at start-up.  Only the constructors below can make one whose numbers
+// have been checked.
+//
+// ```novo
+// use totpparams
+//
+// fn main() [io]
+//     println("${totpparams.default_params().digits}")   // 6
+// ```
+pub struct TotpParams
+    // Which hash the HMAC is taken under.  `TotpAlgSha1` by default;
+    // see `totpalg` for why that is not a deprecation waiting to
+    // happen.
+    algorithm: TotpAlgorithm
+    // How many decimal digits the code has: 6 to 8, 6 by default.
+    digits: Int
+    // How many seconds one TOTP step lasts.  30 by default, which is
+    // RFC 6238 § 4.1's recommendation and what every authenticator
+    // shows.  Not used by HOTP, where the counter is the caller's.
+    step_seconds: Int
+    // The Unix time the steps are counted from — RFC 6238's T0.  0 by
+    // default, which is the Unix epoch and what the URI format has no
+    // parameter for: an authenticator cannot be told a different one,
+    // so a deployment that changes this can only verify codes it
+    // produced itself.
+    t0_seconds: Int
+    // How many steps either side of the current one a verification
+    // will accept.
+    window: TotpWindow
+
+// How far either side of the current step a verification looks.
+//
+// A plain struct rather than a `@value` one because it is a `Result`
+// payload — `window` answers one — and a `@value` struct cannot be
+// one (E2015).
+//
+// ```novo
+// use totpparams
+//
+// fn main() [io]
+//     let w = totpparams.default_window()
+//     println("${w.steps_back} ${w.steps_ahead}")   // 1 0
+// ```
+pub struct TotpWindow
+    // Steps before the current one that are still accepted.  This is
+    // the delay between the authenticator showing a code and the form
+    // being submitted.  Never negative.
+    steps_back: Int
+    // Steps after the current one that are accepted.  This covers a
+    // client whose clock runs fast, and nothing else.  Never
+    // negative.
+    steps_ahead: Int
+
+// The digit count this package writes when nobody chooses one: 6.
+pub const TOTP_DIGITS_DEFAULT = 6
+
+// The fewest digits this package admits: 6.
+pub const TOTP_DIGITS_MIN = 6
+
+// The most digits this package admits: 8.  The Key Uri Format names 6
+// and 8, and RFC 6238's test vectors are stated at 8.
+pub const TOTP_DIGITS_MAX = 8
+
+// The step length this package writes when nobody chooses one: 30
+// seconds, RFC 6238 § 4.1.
+pub const TOTP_STEP_DEFAULT_SECONDS = 30
+
+// The epoch the steps are counted from when nobody chooses one: 0,
+// the Unix epoch, RFC 6238 § 4.1's T0.
+pub const TOTP_T0_DEFAULT = 0
+
+// A window of this many steps back and this many forward.
+//
+// `TotpWindowNegative` when either number is below zero, carrying
+// both, because a caller that got the argument order wrong wants to
+// see the pair.  Zero and zero is a legitimate window: it accepts the
+// current step and nothing else.
+//
+// ```novo
+// use totpparams
+// use totperr
+//
+// fn main() [io]
+//     match totpparams.window(1, 1)
+//         Ok(w)  => println("${w.steps_back} ${w.steps_ahead}")   // 1 1
+//         Err(e) => println(totperr.code(e))
+// ```
+pub fn window(steps_back: Int, steps_ahead: Int) -> Result<TotpWindow, TotpError> []
+    todo("totp-nv.totpparams.window")
+
+// The window this package uses when nobody chooses one: one step
+// back, none forward.
+//
+// RFC 6238 § 5.2 recommends that at most one time step is allowed for
+// network delay, and a delayed submission is the case that actually
+// happens.  A deployment whose clients' clocks drift writes
+// `window(1, 1)` and can be seen to have decided that.
+//
+// ```novo
+// use totpparams
+//
+// fn main() [io]
+//     println("${totpparams.default_window().steps_ahead}")   // 0
+// ```
+pub fn default_window() -> TotpWindow []
+    todo("totp-nv.totpparams.default_window")
+
+// The window that accepts the current step and nothing else.
+//
+// What a machine-to-machine caller with a synchronised clock uses,
+// and what a test uses when it wants one exact answer.
+//
+// ```novo
+// use totpparams
+//
+// fn main() [io]
+//     println("${totpparams.exact_window().steps_back}")   // 0
+// ```
+pub fn exact_window() -> TotpWindow []
+    todo("totp-nv.totpparams.exact_window")
+
+// How many steps a window admits in total: back plus ahead plus the
+// current one.
+//
+// The number of HMACs a verification costs, and the number of codes
+// that are valid at once.  A deployment choosing a window is choosing
+// this number, so it is worth being able to print.
+//
+// ```novo
+// use totpparams
+//
+// fn main() [io]
+//     println("${totpparams.window_steps(totpparams.default_window())}")   // 2
+// ```
+pub fn window_steps(w: TotpWindow) -> Int []
+    todo("totp-nv.totpparams.window_steps")
+
+// The parameters a deployment uses when it chooses nothing: SHA-1,
+// six digits, a thirty second step, T0 at the Unix epoch, and one
+// step of tolerance backwards.
+//
+// These are the values every authenticator agrees with, and a URI
+// written from them needs no parameters at all.
+//
+// ```novo
+// use totpparams
+// use totpalg
+//
+// fn main() [io]
+//     let p = totpparams.default_params()
+//     println("${p.digits} ${p.step_seconds}")           // 6 30
+//     println(totpalg.alg_name(p.algorithm))             // SHA1
+// ```
+pub fn default_params() -> TotpParams []
+    todo("totp-nv.totpparams.default_params")
+
+// Parameters from all five values, checked.
+//
+// `TotpDigitsOutOfRange` when `digits` is outside 6 to 8, and
+// `TotpStepNotPositive` when the step is zero or negative — the
+// counter is a division by it, so zero has no answer.  `t0_seconds`
+// is not checked: a negative T0 counts from before the Unix epoch,
+// which is unusual and not wrong.
+//
+// ```novo
+// use totpparams
+// use totperr
+//
+// fn main() [io]
+//     match totpparams.window(1, 0)
+//         Err(e) => println(totperr.code(e))
+//         Ok(w)  =>
+//             match totpparams.params(TotpAlgSha512, 8, 60, 0, w)
+//                 Ok(p)  => println("${p.digits} ${p.step_seconds}")   // 8 60
+//                 Err(e) => println(totperr.code(e))
+// ```
+pub fn params(algorithm: TotpAlgorithm, digits: Int, step_seconds: Int, t0_seconds: Int,
+              w: TotpWindow) -> Result<TotpParams, TotpError> []
+    todo("totp-nv.totpparams.params")
+
+// The same parameters with a different algorithm.
+//
+// Cannot fail: every arm of `TotpAlgorithm` is one this package
+// computes.
+//
+// ```novo
+// use totpparams
+// use totpalg
+//
+// fn main() [io]
+//     let p = totpparams.with_algorithm(totpparams.default_params(), TotpAlgSha256)
+//     println(totpalg.alg_name(p.algorithm))   // SHA256
+// ```
+pub fn with_algorithm(p: TotpParams, a: TotpAlgorithm) -> TotpParams []
+    todo("totp-nv.totpparams.with_algorithm")
+
+// The same parameters with a different digit count.
+//
+// `TotpDigitsOutOfRange` outside 6 to 8.
+//
+// ```novo
+// use totpparams
+// use totperr
+//
+// fn main() [io]
+//     match totpparams.with_digits(totpparams.default_params(), 9)
+//         Ok(_)  => println("this cannot happen: 9 digits is refused")
+//         Err(e) => println(totperr.code(e))   // digits-out-of-range
+// ```
+pub fn with_digits(p: TotpParams, digits: Int) -> Result<TotpParams, TotpError> []
+    todo("totp-nv.totpparams.with_digits")
+
+// The same parameters with a different step length, in seconds.
+//
+// `TotpStepNotPositive` for zero or a negative number.
+//
+// ```novo
+// use totpparams
+// use totperr
+//
+// fn main() [io]
+//     match totpparams.with_step(totpparams.default_params(), 60)
+//         Ok(p)  => println("${p.step_seconds}")   // 60
+//         Err(e) => println(totperr.code(e))
+// ```
+pub fn with_step(p: TotpParams, step_seconds: Int) -> Result<TotpParams, TotpError> []
+    todo("totp-nv.totpparams.with_step")
+
+// The same parameters counting steps from a different epoch.
+//
+// Cannot fail.  Remember that the enrolment URI has no parameter for
+// T0: an authenticator always counts from the Unix epoch, so a
+// deployment that moves this can verify only codes it produced
+// itself.
+//
+// ```novo
+// use totpparams
+//
+// fn main() [io]
+//     println("${totpparams.with_t0(totpparams.default_params(), 60).t0_seconds}")
+// ```
+pub fn with_t0(p: TotpParams, t0_seconds: Int) -> TotpParams []
+    todo("totp-nv.totpparams.with_t0")
+
+// The same parameters with a different verification window.
+//
+// Cannot fail: a `TotpWindow` was checked when it was made.
+//
+// ```novo
+// use totpparams
+//
+// fn main() [io]
+//     let p = totpparams.with_window(totpparams.default_params(),
+//                                    totpparams.exact_window())
+//     println("${p.window.steps_back}")   // 0
+// ```
+pub fn with_window(p: TotpParams, w: TotpWindow) -> TotpParams []
+    todo("totp-nv.totpparams.with_window")
+
+// Whether these parameters are usable, and why not.
+//
+// `Some(e)` for a digit count outside the range, a step that is not
+// positive, or a negative window; `None` when they are usable.
+//
+// It is here so that a service can check the parameters it read out
+// of its own configuration at start-up, where the message can name
+// the field, rather than per request as a stream of rejections that
+// all look like the user's fault.
+//
+// ```novo
+// use totpparams
+//
+// fn main() [io]
+//     match totpparams.check(totpparams.default_params())
+//         Some(e) => println(e.message())
+//         None    => println("usable")    // usable
+// ```
+pub fn check(p: TotpParams) -> ?TotpError []
+    todo("totp-nv.totpparams.check")

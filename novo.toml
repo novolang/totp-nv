@@ -1,0 +1,77 @@
+[package]
+name        = "totp-nv"
+version     = "0.0.1"
+description = "HOTP (RFC 4226) and TOTP (RFC 6238) over crypto-nv's HMAC, with the counter or the Unix time supplied by the caller: a one-time password is a zero-padded STRING, the verification window is a value, verification answers WHICH step matched so a server can refuse a replay, and the otpauth:// URI parses and formats over url-nv.  Interface only — every body is a todo()."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`.  A time-based one-time password needs the current time, and
+# a `core` package may not read a clock — so the instant arrives as a
+# PARAMETER, `TotpInstant`, the same shape jwt-nv takes for its clock.
+# The `[time]` is spent once, in the caller, where it is visible.
+# Generating a shared secret needs `[rand]`, which this layer's budget
+# does not admit either, so a secret arrives as bytes the caller
+# already holds.  Every public function's effect row is `[]`, and not
+# one of them wanted to widen.
+#
+# It carries NO `tests/embedded_probe.nv` and makes no device claim.
+# Every function here speaks `Bytes`, `Str` or `Result`, and the
+# embedded runtime defines none of the three; the device-shaped part
+# of this work is the digest state, and that is crypto-nv's.
+layer       = "core"
+
+category    = "crypto"
+
+tags = ["totp", "hotp", "otp", "one-time-password", "two-factor", "2fa", "mfa", "authenticator", "rfc-4226", "rfc-6238", "base32", "otpauth"]
+repository  = "https://github.com/novolang/totp-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.9.0"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "The six digits, and which step they came from"
+
+[dependencies]
+# crypto-nv supplies the two things this package cannot do itself.
+# `hashing.hmac_sha1`, `hmac_sha256` and `hmac_sha512` are the keyed
+# hash RFC 4226 § 5.2 is defined over — HOTP is a truncation of an
+# HMAC and nothing else — and `digest.ct_eq` is the constant-time
+# comparison a one-time password must be checked with, because `==`
+# on a six-character string stops at the first wrong character and
+# the time it took says how many were right.  `core`, so the layer
+# rule holds.
+crypto-nv = "^0.1"
+
+# url-nv supplies the parsing and the percent-encoding of the
+# `otpauth://` URI: the scheme, the type and the label, the query
+# parameters, and the encoding of a label that contains a space or a
+# colon.  Writing that by hand is where an authenticator URI gets a
+# `+` where it needed a `%20` and stops round-tripping.  `core`, so
+# the layer rule holds.
+url-nv = "^0.1"
+
+# NOT a base32 package, because the registry has none: base32-nv
+# answers NO_SUCH_PACKAGE.  RFC 4648's base32 is an alphabet of
+# thirty-two characters and a regrouping of five bits into eight, and
+# an authenticator secret is the only thing on this grid written in
+# it, so it is a prefixed module of this package — `totpbase32` —
+# rather than a dependency that does not exist.  totp-rs and pyotp
+# both carry their own for the same reason.  If a base32 row is ever
+# published, this module is what it starts from.
+#
+# NOT rand-nv.  Generating a shared secret is `[rand]`, which `core`
+# does not admit.  The secret arrives as bytes, and the twenty random
+# ones behind them are the caller's or a `host` package's.  See the
+# `layer` comment.
+#
+# NOT qrcode-nv.  An authenticator is enrolled by scanning a QR code,
+# and what a QR encoder takes is a string: `totpuri.format` answers
+# that string, and rendering it is another package's work.

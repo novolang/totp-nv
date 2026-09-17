@@ -1,0 +1,274 @@
+// totpbase32 — RFC 4648's base32, and the shared secret that is
+// written in it.
+//
+// WHY BASE32 IS IN THIS PACKAGE.  A shared secret is a string of
+// random bytes, and the string a user reads off a screen and types
+// into a phone is that secret in base32.  The registry has no base32
+// package, and an authenticator secret is the only thing on this grid
+// written in base32, so the codec is a module here.  totp-rs and
+// pyotp carry their own for the same reason.  It is thirty-two
+// characters and a regrouping of five bits into eight.
+//
+// THE ALPHABET.  RFC 4648 § 6: the twenty-six upper-case letters and
+// the digits 2 to 7.  It leaves out `0`, `1` and `8` because those
+// are what a reader turns `O`, `I` and `B` into, which is the whole
+// reason base32 exists where base64 would be shorter.
+//
+// EIGHT CHARACTERS PER FIVE BYTES.  Forty bits divide by five and by
+// eight, so five bytes become eight characters exactly.  A shorter
+// tail is padded with `=` to a multiple of eight in the RFC's
+// encoding, and the padding carries no information: it exists so that
+// two encoded strings can be concatenated.  A secret is never
+// concatenated with anything.
+//
+// WHAT THIS MODULE DOES WITH PADDING AND CASE, AND WHY IT IS NOT THE
+// RFC'S DEFAULT.  `encode` writes NO padding, because no authenticator
+// shows any and a `=` in a URI has to be percent-encoded.  `decode`
+// accepts padding and accepts its absence.  `decode` is also
+// CASE-INSENSITIVE: a user copying twenty-six characters off a screen
+// types them in lower case, and a server that refused that would be
+// refusing the correct secret.
+
+use std.bytes
+
+// The thirty-two characters RFC 4648 § 6 encodes with, in order:
+// value 0 is `A` and value 31 is `7`.
+//
+// Published as a constant because an implementation that spells the
+// alphabet inside a function is an implementation whose alphabet
+// nobody has checked.
+pub const TOTP_BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+// The character RFC 4648 pads a short group with.  `decode` accepts
+// it; `encode` never writes it.
+pub const TOTP_BASE32_PAD = "="
+
+// Bytes one full base32 group carries: 5.
+pub const TOTP_BASE32_GROUP_BYTES = 5
+
+// Characters one full base32 group occupies: 8.
+pub const TOTP_BASE32_GROUP_CHARS = 8
+
+// The five bits a character carries, or -1 when it is not a base32
+// character.
+//
+// Takes a byte, so a caller walking a string with `bytes.byte_at`
+// does not build a one-character `Str` per position.  Upper and lower
+// case answer the same value: `65` (`A`) and `97` (`a`) are both 0.
+// The padding character answers -1, because it carries no bits; a
+// decoder recognises it separately.
+//
+// ```novo
+// use totpbase32
+//
+// fn main() [io]
+//     println("${totpbase32.char_value(65)}")    // 0  — 'A'
+//     println("${totpbase32.char_value(97)}")    // 0  — 'a', the same value
+//     println("${totpbase32.char_value(55)}")    // 31 — '7'
+//     println("${totpbase32.char_value(49)}")    // -1 — '1' is not in the alphabet
+// ```
+pub fn char_value(byte: Int) -> Int []
+    todo("totp-nv.totpbase32.char_value")
+
+// How many characters `raw_len` bytes encode to, with no padding.
+//
+// Forty bits per group, so it is `raw_len * 8` bits rounded up to a
+// multiple of five and divided by five: 1 byte is 2 characters, 5
+// bytes are 8, 10 bytes are 16, and the 20 bytes of an authenticator
+// secret are 32.
+//
+// ```novo
+// use totpbase32
+//
+// fn main() [io]
+//     println("${totpbase32.encoded_len(20)}")   // 32
+//     println("${totpbase32.encoded_len(1)}")    // 2
+// ```
+pub fn encoded_len(raw_len: Int) -> Int []
+    todo("totp-nv.totpbase32.encoded_len")
+
+// How many bytes this text decodes to.
+//
+// Counts the characters that are not padding and answers `n * 5 / 8`.
+// It does not check the text: a character outside the alphabet is
+// still counted, so a caller sizes a buffer with this and learns
+// about the bad character from `decode_into`.  It is the buffer
+// question and not the validity question.
+//
+// ```novo
+// use totpbase32
+//
+// fn main() [io]
+//     let padded = "MZXW6YTBOI======"
+//     let bare = "MZXW6YTBOI"
+//     println("${totpbase32.decoded_len(padded)}")   // 6
+//     println("${totpbase32.decoded_len(bare)}")     // 6
+// ```
+pub fn decoded_len(text: Str) -> Int []
+    todo("totp-nv.totpbase32.decoded_len")
+
+// Encode bytes into a buffer the caller owns.
+//
+// `out` must be exactly `encoded_len(bytes.len(raw))` bytes;
+// anything else is `TotpBufferWrong` with both numbers, rather than
+// a truncated secret that looks like a secret.  The answer is `out`,
+// so a caller can write and read in one expression.  No padding is
+// written.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+//
+// fn main() [io]
+//     let raw = bytes.from_str("foobar")
+//     let out = bytes.zeros(totpbase32.encoded_len(bytes.len(raw)))
+//     match totpbase32.encode_into(raw, out)
+//         Ok(w)  => println(bytes.to_str(w))     // MZXW6YTBOI
+//         Err(e) => println(e.message())
+// ```
+pub fn encode_into(raw: Bytes, out: Bytes) -> Result<Bytes, TotpError> []
+    todo("totp-nv.totpbase32.encode_into")
+
+// Encode bytes, allocating the string.
+//
+// The convenience form, for enrolment code that runs once per user
+// and has no buffer to reuse.  No padding: `"f"` is `"MY"`, where
+// RFC 4648 § 10 writes `"MY======"`.  Both decode to the same byte.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+//
+// fn main() [io]
+//     println(totpbase32.encode(bytes.from_str("foobar")))   // MZXW6YTBOI
+// ```
+pub fn encode(raw: Bytes) -> Str []
+    todo("totp-nv.totpbase32.encode")
+
+// Decode base32 text into a buffer the caller owns.
+//
+// Upper case, lower case and a mixture all decode.  Padding is
+// accepted and is not required.  A character that is not in the
+// alphabet is `TotpSecretNotBase32` naming the character and its
+// offset; a trailing group that cannot be completed is
+// `TotpSecretTruncated`; a buffer that is not
+// `decoded_len(text)` bytes is `TotpBufferWrong`.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+//
+// fn main() [io]
+//     let text = "mzxw6ytboi"
+//     let out = bytes.zeros(totpbase32.decoded_len(text))
+//     match totpbase32.decode_into(text, out)
+//         Ok(w)  => println(bytes.to_str(w))     // foobar
+//         Err(e) => println(e.message())
+// ```
+pub fn decode_into(text: Str, out: Bytes) -> Result<Bytes, TotpError> []
+    todo("totp-nv.totpbase32.decode_into")
+
+// Decode base32 text, allocating the bytes.
+//
+// The same refusals as `decode_into`.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+//
+// fn main() [io]
+//     match totpbase32.decode("MZXW6===")
+//         Ok(raw) => println(bytes.to_str(raw))   // foo
+//         Err(e)  => println(e.message())
+// ```
+pub fn decode(text: Str) -> Result<Bytes, TotpError> []
+    todo("totp-nv.totpbase32.decode")
+
+// A shared secret that has been checked.
+//
+// A plain struct rather than a `@value` one because it is a `Result`
+// payload — `secret` and `secret_of_base32` both answer one — and a
+// `@value` struct cannot be one (E2015).
+//
+// The type exists so that the functions below it take a key that is
+// not empty and say so in their signature, and so that a secret and
+// a message cannot be passed in the wrong order.  It holds the RAW
+// bytes: base32 is how a secret is written down, not what it is.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Ok(s)  => println("${bytes.len(totpbase32.secret_bytes(s))}")   // 20
+//         Err(e) => println(e.message())
+// ```
+pub struct TotpSecret
+    // The key the HMAC is taken under, as bytes.  RFC 4226 § 4
+    // requires at least 128 bits and recommends 160, which is the 20
+    // bytes every authenticator enrolment writes.
+    raw: Bytes
+
+// A secret from raw bytes.
+//
+// `TotpSecretEmpty` for no bytes at all: an empty HMAC key works,
+// which is the danger — every code it produces is correct and
+// anybody can produce them.  A short key is accepted, because RFC
+// 4226 § 4's 128-bit floor is a recommendation to a deployment and
+// not a rule a decoder can enforce on an already-enrolled user.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totperr
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.zeros(0))
+//         Ok(_)  => println("this cannot happen: an empty secret is refused")
+//         Err(e) => println(totperr.code(e))    // secret-empty
+// ```
+pub fn secret(raw: Bytes) -> Result<TotpSecret, TotpError> []
+    todo("totp-nv.totpbase32.secret")
+
+// A secret from the base32 text a user typed.
+//
+// `decode` and then `secret`, which is the pair every login form
+// needs and the one place a deployment turns a stored string into a
+// key.  Case-insensitive, padding optional.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+//
+// fn main() [io]
+//     match totpbase32.secret_of_base32("gezdgnbvgy3tqojqgezdgnbvgy3tqojq")
+//         Ok(s)  => println(bytes.to_str(totpbase32.secret_bytes(s)))
+//         Err(e) => println(e.message())
+//     // 12345678901234567890
+// ```
+pub fn secret_of_base32(text: Str) -> Result<TotpSecret, TotpError> []
+    todo("totp-nv.totpbase32.secret_of_base32")
+
+// The key bytes a secret holds.
+//
+// What the HMAC is taken under.  A caller re-encoding a secret for a
+// new enrolment URI wants `secret_base32` instead.
+pub fn secret_bytes(s: TotpSecret) -> Bytes []
+    todo("totp-nv.totpbase32.secret_bytes")
+
+// The secret as the base32 text an authenticator is enrolled with:
+// upper case, no padding.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Ok(s)  => println(totpbase32.secret_base32(s))
+//         Err(e) => println(e.message())
+//     // GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
+// ```
+pub fn secret_base32(s: TotpSecret) -> Str []
+    todo("totp-nv.totpbase32.secret_base32")

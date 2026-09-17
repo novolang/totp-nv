@@ -1,0 +1,294 @@
+// tests/totp_rfc6238_tests.nv — TOTP against RFC 6238 Appendix B, and
+// the three decisions that shape the package: the time is a parameter,
+// the window is a value, and verification answers which step matched.
+//
+// They COMPILE today and they FAIL at run, on the `not implemented:
+// totp-nv.<module>.<fn>` panic that is each body.
+//
+// WHERE THE VECTORS COME FROM.  RFC 6238 Appendix B prints eight-digit
+// TOTP values at six instants for all three algorithms.
+//
+// THE RFC'S OWN ERRATUM.  The appendix's text says the seed is the
+// twenty ASCII bytes "12345678901234567890" for every algorithm, and
+// its table is not computed that way.  The published values need the
+// ASCII string REPEATED TO THE HASH'S BLOCK SIZE: 20 bytes for
+// HMAC-SHA-1, 32 for HMAC-SHA-256 and 64 for HMAC-SHA-512.  This is
+// RFC errata 2866 and 3208, and an implementation that takes the
+// appendix's text literally reproduces the SHA-1 column and neither of
+// the others.  The three seeds below are written out in full for that
+// reason.
+//
+// Every value was recomputed from those seeds before it was written
+// down.
+
+use std.test
+use std.bytes
+use totpbase32
+use totpparams
+use totptime
+
+// The SHA-1 seed: the twenty ASCII bytes of the appendix.
+fn seed_sha1() -> TotpSecret
+    match totpbase32.secret(bytes.from_str("12345678901234567890"))
+        Ok(s)  => s
+        Err(_) => TotpSecret { raw: bytes.zeros(0) }
+
+// The SHA-256 seed: the same bytes repeated to the 32-byte block of
+// HMAC-SHA-256.  See the erratum note above.
+fn seed_sha256() -> TotpSecret
+    match totpbase32.secret(bytes.from_str("12345678901234567890123456789012"))
+        Ok(s)  => s
+        Err(_) => TotpSecret { raw: bytes.zeros(0) }
+
+// The SHA-512 seed: the same bytes repeated to the 64-byte block of
+// HMAC-SHA-512.
+fn seed_sha512() -> TotpSecret
+    let text = "1234567890123456789012345678901234567890123456789012345678901234"
+    match totpbase32.secret(bytes.from_str(text))
+        Ok(s)  => s
+        Err(_) => TotpSecret { raw: bytes.zeros(0) }
+
+// Eight-digit parameters over an algorithm, on the appendix's thirty
+// second step.
+fn params8(a: TotpAlgorithm) -> TotpParams
+    let with_alg = totpparams.with_algorithm(totpparams.default_params(), a)
+    match totpparams.with_digits(with_alg, 8)
+        Ok(p)  => p
+        Err(_) => totpparams.default_params()
+
+// The eight-digit TOTP of a seed at a Unix time.
+fn totp_at(s: TotpSecret, a: TotpAlgorithm, unix: Int) -> Str
+    match totptime.totp(s, params8(a), totptime.instant(unix))
+        Ok(c)  => c
+        Err(e) => e.message()
+
+@test
+fn test_appendix_b_sha1() [io]
+    test.case("the six published instants, HMAC-SHA-1, eight digits")
+    test.assert_eq_str(totp_at(seed_sha1(), TotpAlgSha1, 59), "94287082")
+    test.assert_eq_str(totp_at(seed_sha1(), TotpAlgSha1, 1111111109), "07081804")
+    test.assert_eq_str(totp_at(seed_sha1(), TotpAlgSha1, 1111111111), "14050471")
+    test.assert_eq_str(totp_at(seed_sha1(), TotpAlgSha1, 1234567890), "89005924")
+    test.assert_eq_str(totp_at(seed_sha1(), TotpAlgSha1, 2000000000), "69279037")
+    test.assert_eq_str(totp_at(seed_sha1(), TotpAlgSha1, 20000000000), "65353130")
+
+    test.case("the first of them begins with a zero, which a string keeps")
+    test.assert_eq_str(totp_at(seed_sha1(), TotpAlgSha1, 1111111109), "07081804")
+
+@test
+fn test_appendix_b_sha256_and_sha512() [io]
+    // These two columns are the erratum: they need the seed repeated
+    // to the block size, not the twenty bytes the appendix's prose
+    // names.
+    test.case("HMAC-SHA-256 over the 32-byte seed")
+    test.assert_eq_str(totp_at(seed_sha256(), TotpAlgSha256, 59), "46119246")
+    test.assert_eq_str(totp_at(seed_sha256(), TotpAlgSha256, 1111111109), "68084774")
+    test.assert_eq_str(totp_at(seed_sha256(), TotpAlgSha256, 1111111111), "67062674")
+    test.assert_eq_str(totp_at(seed_sha256(), TotpAlgSha256, 1234567890), "91819424")
+    test.assert_eq_str(totp_at(seed_sha256(), TotpAlgSha256, 2000000000), "90698825")
+    test.assert_eq_str(totp_at(seed_sha256(), TotpAlgSha256, 20000000000), "77737706")
+
+    test.case("HMAC-SHA-512 over the 64-byte seed")
+    test.assert_eq_str(totp_at(seed_sha512(), TotpAlgSha512, 59), "90693936")
+    test.assert_eq_str(totp_at(seed_sha512(), TotpAlgSha512, 1111111109), "25091201")
+    test.assert_eq_str(totp_at(seed_sha512(), TotpAlgSha512, 1111111111), "99943326")
+    test.assert_eq_str(totp_at(seed_sha512(), TotpAlgSha512, 1234567890), "93441116")
+    test.assert_eq_str(totp_at(seed_sha512(), TotpAlgSha512, 2000000000), "38618901")
+    test.assert_eq_str(totp_at(seed_sha512(), TotpAlgSha512, 20000000000), "47863826")
+
+    test.case("the three seeds are the three block sizes")
+    test.assert_eq(bytes.len(totpbase32.secret_bytes(seed_sha1())), 20)
+    test.assert_eq(bytes.len(totpbase32.secret_bytes(seed_sha256())), 32)
+    test.assert_eq(bytes.len(totpbase32.secret_bytes(seed_sha512())), 64)
+
+@test
+fn test_the_counter_is_the_arithmetic_of_section_4_2() [io]
+    // T = (unix - T0) / X, integer division.  The appendix prints the
+    // counter beside each instant, in hex.
+    let p = totpparams.default_params()
+
+    test.case("the published counters")
+    test.assert_eq(totptime.counter_at(p, totptime.instant(59)), 1)
+    test.assert_eq(totptime.counter_at(p, totptime.instant(1111111109)), 37037036)
+    test.assert_eq(totptime.counter_at(p, totptime.instant(1111111111)), 37037037)
+    test.assert_eq(totptime.counter_at(p, totptime.instant(1234567890)), 41152263)
+    test.assert_eq(totptime.counter_at(p, totptime.instant(2000000000)), 66666666)
+    test.assert_eq(totptime.counter_at(p, totptime.instant(20000000000)), 666666666)
+
+    test.case("every second of a step answers the same counter")
+    test.assert_eq(totptime.counter_at(p, totptime.instant(30)), 1)
+    test.assert_eq(totptime.counter_at(p, totptime.instant(59)), 1)
+    test.assert_eq(totptime.counter_at(p, totptime.instant(60)), 2)
+
+    test.case("and a longer step divides by a different number")
+    match totpparams.with_step(p, 60)
+        Err(e)   => test.fail(e.message())
+        Ok(slow) => test.assert_eq(totptime.counter_at(slow, totptime.instant(59)), 0)
+
+@test
+fn test_the_instant_is_the_callers_and_carries_no_clock() [io]
+    // Nothing in this package reads a clock, so every assertion here
+    // names its own instant — which is also why a support tool can ask
+    // "was this code valid at the time it was presented".
+    test.case("an instant is the number it was made from")
+    test.assert_eq(totptime.unix_seconds(totptime.instant(1111111109)), 1111111109)
+
+    test.case("plus moves it, and across a step boundary")
+    let p = totpparams.default_params()
+    let just_before = totptime.instant(59)
+    test.assert_eq(totptime.counter_at(p, just_before), 1)
+    test.assert_eq(totptime.counter_at(p, totptime.plus(just_before, 1)), 2)
+    test.assert_eq(totptime.unix_seconds(totptime.plus(just_before, -59)), 0)
+
+    test.case("step_start is where counter_at came from")
+    test.assert_eq(totptime.unix_seconds(totptime.step_start(p, 1)), 30)
+    test.assert_eq(totptime.unix_seconds(totptime.step_start(p, 37037036)), 1111111080)
+
+    test.case("seconds_remaining is the ring an authenticator draws")
+    test.assert_eq(totptime.seconds_remaining(p, totptime.instant(30)), 30)
+    test.assert_eq(totptime.seconds_remaining(p, totptime.instant(59)), 1)
+
+    test.case("a T0 of its own moves every step")
+    let shifted = totptime.counter_at(totpparams.with_t0(p, 60), totptime.instant(90))
+    test.assert_eq(shifted, 1)
+
+@test
+fn test_verification_answers_which_step_matched() [io]
+    // The decision the package is built around.  A verify that
+    // answered only true or false could not stop a replay, and RFC
+    // 6238 § 5.2 requires that a code accepted once is refused the
+    // second time.
+    let p = totpparams.default_params()
+
+    test.case("the current step matches at offset 0")
+    match totptime.verify(seed_sha1(), "287082", p, totptime.instant(59))
+        Err(e) => test.fail(e.message())
+        Ok(m)  =>
+            test.assert(m.matched)
+            test.assert_eq(m.counter, 1)
+            test.assert_eq(m.offset_steps, 0)
+            test.assert_eq(m.at_counter, 1)
+
+    test.case("the previous step matches at offset -1, inside the default window")
+    match totptime.verify(seed_sha1(), "287082", p, totptime.instant(89))
+        Err(e) => test.fail(e.message())
+        Ok(m)  =>
+            test.assert(m.matched)
+            test.assert_eq(m.counter, 1)
+            test.assert_eq(m.offset_steps, -1)
+            test.assert_eq(m.at_counter, 2)
+
+    test.case("two steps back is outside it, and is not an error")
+    match totptime.verify(seed_sha1(), "287082", p, totptime.instant(119))
+        Err(e) => test.fail(e.message())
+        Ok(m)  =>
+            test.assert(not m.matched)
+            test.assert_eq(m.counter, -1)
+            test.assert_eq(m.at_counter, 3)
+
+    test.case("the default window looks backward and not forward")
+    match totptime.verify(seed_sha1(), "359152", p, totptime.instant(30))
+        Err(e) => test.fail(e.message())
+        Ok(m)  => test.assert(not m.matched)
+
+@test
+fn test_the_window_is_a_value_with_two_numbers() [io]
+    // A clock that is behind and a clock that is ahead are different
+    // risks, so they are different numbers.
+    test.case("the default is one step back and none forward")
+    let d = totpparams.default_window()
+    test.assert_eq(d.steps_back, 1)
+    test.assert_eq(d.steps_ahead, 0)
+
+    test.case("the exact window accepts the current step alone")
+    let x = totpparams.exact_window()
+    test.assert_eq(x.steps_back, 0)
+    test.assert_eq(x.steps_ahead, 0)
+    test.assert_eq(totpparams.window_steps(x), 1)
+    test.assert_eq(totpparams.window_steps(d), 2)
+
+    test.case("a symmetric window is three steps and says so")
+    match totpparams.window(1, 1)
+        Err(e) => test.fail(e.message())
+        Ok(w)  =>
+            test.assert_eq(totpparams.window_steps(w), 3)
+
+            test.case("and it is what accepts a code from a step ahead")
+            let ahead = totpparams.with_window(totpparams.default_params(), w)
+            match totptime.verify(seed_sha1(), "359152", ahead, totptime.instant(30))
+                Err(e) => test.fail(e.message())
+                Ok(m)  =>
+                    test.assert(m.matched)
+                    test.assert_eq(m.offset_steps, 1)
+
+    test.case("a negative window is a programming mistake")
+    match totpparams.window(-1, 0)
+        Ok(_)  => test.fail("a window cannot count backwards past zero")
+        Err(e) =>
+            test.assert(totperr.is_program_fault(e))
+            test.assert_eq_str(totperr.code(e), "window-negative")
+
+@test
+fn test_the_caller_remembers_the_step_and_refuses_a_replay() [io]
+    // RFC 6238 § 5.2.  This package answers which step matched; the
+    // store is the caller's, and `is_replay` is the comparison.
+    let p = totpparams.default_params()
+
+    test.case("a first verification is not a replay")
+    match totptime.verify(seed_sha1(), "287082", p, totptime.instant(59))
+        Err(e) => test.fail(e.message())
+        Ok(m)  =>
+            test.assert(not totptime.is_replay(m, -1))
+
+            test.case("the same match against a stored counter of 1 is one")
+            test.assert(totptime.is_replay(m, 1))
+
+            test.case("and so is a match at a step below the stored one")
+            test.assert(totptime.is_replay(m, 2))
+
+    test.case("nothing that did not match can be a replay")
+    test.assert(not totptime.is_replay(totptime.no_match(totptime.instant(59)), 99))
+
+    test.case("a no-match still says which step the server was in")
+    let m = totptime.no_match(totptime.instant(59))
+    test.assert_eq(m.counter, -1)
+    test.assert_eq(m.offset_steps, 0)
+
+@test
+fn test_the_parameters_are_checked_once_and_carried() [io]
+    test.case("the defaults are the interoperable ones")
+    let p = totpparams.default_params()
+    test.assert_eq(p.digits, totpparams.TOTP_DIGITS_DEFAULT)
+    test.assert_eq(p.step_seconds, totpparams.TOTP_STEP_DEFAULT_SECONDS)
+    test.assert_eq(p.t0_seconds, totpparams.TOTP_T0_DEFAULT)
+
+    test.case("and they are usable")
+    match totpparams.check(p)
+        None    => test.assert(true)
+        Some(e) => test.fail(e.message())
+
+    test.case("the full constructor checks the same three things")
+    match totpparams.params(TotpAlgSha512, 8, 60, 0, totpparams.exact_window())
+        Err(e) => test.fail(e.message())
+        Ok(q)  =>
+            test.assert_eq(q.digits, 8)
+            test.assert_eq(q.step_seconds, 60)
+
+    test.case("a step of zero has no counter to compute")
+    match totpparams.params(TotpAlgSha1, 6, 0, 0, totpparams.exact_window())
+        Ok(_)  => test.fail("a step of zero would be a division by zero")
+        Err(e) => test.assert_eq_str(totperr.code(e), "step-not-positive")
+
+    test.case("nine digits is refused with the bounds in the message")
+    match totpparams.params(TotpAlgSha1, 9, 30, 0, totpparams.exact_window())
+        Ok(_)  => test.fail("nine digits is outside 6 to 8")
+        Err(e) =>
+            test.assert(totperr.is_program_fault(e))
+            test.assert_eq_str(totperr.code(e), "digits-out-of-range")
+
+    test.case("a secret typed off a screen in lower case is the same secret")
+    match totpbase32.secret_of_base32("gezdgnbvgy3tqojqgezdgnbvgy3tqojq")
+        Err(e) => test.fail(e.message())
+        Ok(s)  =>
+            test.assert_eq_str(bytes.to_str(totpbase32.secret_bytes(s)),
+                               "12345678901234567890")

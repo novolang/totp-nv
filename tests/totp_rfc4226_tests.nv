@@ -1,0 +1,223 @@
+// tests/totp_rfc4226_tests.nv — HOTP against RFC 4226 Appendix D.
+//
+// They COMPILE today and they FAIL at run, with `not implemented:
+// totp-nv.<module>.<fn>` from the `todo()` that is each body.  That is
+// the expected state of an interface release: the compiler has checked
+// every signature, every type and every effect row, and nothing else
+// has been checked because there is nothing else yet.
+//
+// WHERE THE VECTORS COME FROM.  RFC 4226 Appendix D prints three
+// columns for the ASCII secret "12345678901234567890" at counters 0 to
+// 9: the intermediate HMAC-SHA-1, the decimal value dynamic truncation
+// reads out of it, and the six-digit code.  All three are asserted
+// here, so an implementation that produces wrong digits can be
+// bisected — a wrong HMAC is a key or a counter encoding, a wrong
+// truncation with a right HMAC is the offset or the sign bit, and a
+// wrong code with both right is the modulo or the padding.
+//
+// Every value below was recomputed from the secret before it was
+// written down, and the two derived columns agree: each truncated
+// decimal ends in its own published code.
+
+use std.test
+use std.bytes
+use totpbase32
+use totphotp
+use totpparams
+
+// The Appendix D secret.  The `Err` arm is unreachable — the twenty
+// bytes are not empty — and builds an empty secret so the helper stays
+// total.
+fn appendix_secret() -> TotpSecret
+    match totpbase32.secret(bytes.from_str("12345678901234567890"))
+        Ok(s)  => s
+        Err(_) => TotpSecret { raw: bytes.zeros(0) }
+
+// The six-digit code at a counter.
+fn code_at(counter: Int) -> Str
+    match totphotp.hotp(appendix_secret(), counter, totpparams.default_params())
+        Ok(c)  => c
+        Err(e) => e.message()
+
+// The intermediate HMAC at a counter, in hex.
+fn hmac_hex(counter: Int) -> Str
+    match totphotp.hmac_of_counter(appendix_secret(), counter,
+                                   totpparams.default_params())
+        Ok(d)  => bytes.to_hex(d)
+        Err(e) => e.message()
+
+// The dynamic truncation of a digest written as hex.
+fn truncated_of(hex: Str) -> Int
+    match bytes.from_hex(hex)
+        None    => -1
+        Some(d) =>
+            match totphotp.dynamic_truncate(d)
+                Ok(v)  => v
+                Err(_) => -1
+
+@test
+fn test_the_appendix_d_codes() [io]
+    // RFC 4226 Appendix D, the HOTP column, at six digits.
+    test.case("counters 0 to 4")
+    test.assert_eq_str(code_at(0), "755224")
+    test.assert_eq_str(code_at(1), "287082")
+    test.assert_eq_str(code_at(2), "359152")
+    test.assert_eq_str(code_at(3), "969429")
+    test.assert_eq_str(code_at(4), "338314")
+
+    test.case("counters 5 to 9")
+    test.assert_eq_str(code_at(5), "254676")
+    test.assert_eq_str(code_at(6), "287922")
+    test.assert_eq_str(code_at(7), "162583")
+    test.assert_eq_str(code_at(8), "399871")
+    test.assert_eq_str(code_at(9), "520489")
+
+    test.case("every code is exactly six characters")
+    test.assert_eq(str.len(code_at(0)), 6)
+    test.assert_eq(str.len(code_at(7)), 6)
+
+@test
+fn test_the_appendix_d_intermediate_hmacs() [io]
+    // The first column of the appendix.  A wrong value here is a
+    // wrong key, a wrong counter encoding or a wrong HMAC, and none
+    // of those is a truncation bug.
+    test.case("counters 0 to 4")
+    test.assert_eq_str(hmac_hex(0), "cc93cf18508d94934c64b65d8ba7667fb7cde4b0")
+    test.assert_eq_str(hmac_hex(1), "75a48a19d4cbe100644e8ac1397eea747a2d33ab")
+    test.assert_eq_str(hmac_hex(2), "0bacb7fa082fef30782211938bc1c5e70416ff44")
+    test.assert_eq_str(hmac_hex(3), "66c28227d03a2d5529262ff016a1e6ef76557ece")
+    test.assert_eq_str(hmac_hex(4), "a904c900a64b35909874b33e61c5938a8e15ed1c")
+
+    test.case("counters 5 to 9")
+    test.assert_eq_str(hmac_hex(5), "a37e783d7b7233c083d4f62926c7a25f238d0316")
+    test.assert_eq_str(hmac_hex(6), "bc9cd28561042c83f219324d3c607256c03272ae")
+    test.assert_eq_str(hmac_hex(7), "a4fb960c0bc06e1eabb804e5b397cdc4b45596fa")
+    test.assert_eq_str(hmac_hex(8), "1b3c89f65e6c9e883012052823443f048b4332db")
+    test.assert_eq_str(hmac_hex(9), "1637409809a679dc698207310c8c7fc07290d9e5")
+
+    test.case("SHA-1 is twenty bytes, so the hex is forty characters")
+    test.assert_eq(str.len(hmac_hex(0)), 40)
+
+@test
+fn test_dynamic_truncation_reads_the_published_decimals() [io]
+    // The middle column.  Each value is the 31-bit number § 5.3 reads
+    // out of the digest above it, and each ends in the code below it.
+    test.case("counters 0 to 4")
+    test.assert_eq(truncated_of("cc93cf18508d94934c64b65d8ba7667fb7cde4b0"), 1284755224)
+    test.assert_eq(truncated_of("75a48a19d4cbe100644e8ac1397eea747a2d33ab"), 1094287082)
+    test.assert_eq(truncated_of("0bacb7fa082fef30782211938bc1c5e70416ff44"), 137359152)
+    test.assert_eq(truncated_of("66c28227d03a2d5529262ff016a1e6ef76557ece"), 1726969429)
+    test.assert_eq(truncated_of("a904c900a64b35909874b33e61c5938a8e15ed1c"), 1640338314)
+
+    test.case("counters 5 to 9")
+    test.assert_eq(truncated_of("a37e783d7b7233c083d4f62926c7a25f238d0316"), 868254676)
+    test.assert_eq(truncated_of("bc9cd28561042c83f219324d3c607256c03272ae"), 1918287922)
+    test.assert_eq(truncated_of("a4fb960c0bc06e1eabb804e5b397cdc4b45596fa"), 82162583)
+    test.assert_eq(truncated_of("1b3c89f65e6c9e883012052823443f048b4332db"), 673399871)
+    test.assert_eq(truncated_of("1637409809a679dc698207310c8c7fc07290d9e5"), 645520489)
+
+    test.case("and nothing it reads exceeds the mask § 5.3 applies")
+    test.assert(truncated_of("cc93cf18508d94934c64b65d8ba7667fb7cde4b0")
+                <= totphotp.TOTP_TRUNCATION_MASK)
+
+@test
+fn test_the_code_is_a_string_so_a_leading_zero_survives() [io]
+    // THE decision `code_of_truncated` exists for.  Counter 7's
+    // truncated value is 82162583, an eight-digit number whose six
+    // low digits are 162583 — and a value whose low digits start with
+    // a zero has to keep it.
+    test.case("the published six digits are the low six of the decimal")
+    match totphotp.code_of_truncated(82162583, 6)
+        Err(e) => test.fail(e.message())
+        Ok(c)  => test.assert_eq_str(c, "162583")
+
+    test.case("a value whose low six digits are all zero is six zeros")
+    match totphotp.code_of_truncated(1000000, 6)
+        Err(e) => test.fail(e.message())
+        Ok(c)  => test.assert_eq_str(c, "000000")
+
+    test.case("and a leading zero is kept rather than dropped")
+    match totphotp.code_of_truncated(1000042, 6)
+        Err(e) => test.fail(e.message())
+        Ok(c)  => test.assert_eq_str(c, "000042")
+
+    test.case("eight digits of the same value keep their own width")
+    match totphotp.code_of_truncated(82162583, 8)
+        Err(e) => test.fail(e.message())
+        Ok(c)  => test.assert_eq_str(c, "82162583")
+
+    test.case("nine digits is a programming mistake, not a wide code")
+    match totphotp.code_of_truncated(82162583, 9)
+        Ok(_)  => test.fail("9 digits is outside the range this package admits")
+        Err(e) => test.assert_eq_str(totperr.code(e), "digits-out-of-range")
+
+@test
+fn test_the_counter_is_eight_big_endian_bytes() [io]
+    // RFC 4226 § 5.1.  A little-endian counter produces plausible
+    // codes that match nothing, which is why this is asserted on its
+    // own rather than only through `hotp`.
+    test.case("zero is eight zero bytes")
+    test.assert_eq_str(bytes.to_hex(totphotp.counter_bytes(0)),
+                       "0000000000000000")
+
+    test.case("one is in the LAST byte")
+    test.assert_eq_str(bytes.to_hex(totphotp.counter_bytes(1)),
+                       "0000000000000001")
+
+    test.case("and 255 fills that byte rather than the first")
+    test.assert_eq_str(bytes.to_hex(totphotp.counter_bytes(255)),
+                       "00000000000000ff")
+
+    test.case("a counter is always eight bytes")
+    test.assert_eq(bytes.len(totphotp.counter_bytes(0)),
+                   totphotp.TOTP_COUNTER_BYTES)
+
+@test
+fn test_verifying_one_counter() [io]
+    let p = totpparams.default_params()
+
+    test.case("the published code at its own counter is accepted")
+    match totphotp.verify_at(appendix_secret(), 0, "755224", p)
+        Err(e) => test.fail(e.message())
+        Ok(ok) => test.assert(ok)
+
+    test.case("the same code at the next counter is Ok(false), not an error")
+    match totphotp.verify_at(appendix_secret(), 1, "755224", p)
+        Err(e) => test.fail(e.message())
+        Ok(ok) => test.assert(not ok)
+
+    test.case("a five-character code is a user event, and says so")
+    match totphotp.verify_at(appendix_secret(), 0, "75522", p)
+        Ok(_)  => test.fail("five characters is not a six-digit code")
+        Err(e) =>
+            test.assert(totperr.is_user_fault(e))
+            test.assert_eq_str(totperr.code(e), "code-wrong-length")
+
+    test.case("and a code with a letter in it names the offset")
+    match totphotp.verify_at(appendix_secret(), 0, "75522a", p)
+        Ok(_)  => test.fail("a letter is not a decimal digit")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "code-not-digits")
+            test.assert_eq(totperr.offset(e), 5)
+
+@test
+fn test_a_form_can_check_the_shape_before_it_does_an_hmac() [io]
+    let p = totpparams.default_params()
+
+    test.case("six digits is well formed")
+    match totphotp.check_code("755224", p)
+        None    => test.assert(true)
+        Some(e) => test.fail(e.message())
+
+    test.case("five is not")
+    match totphotp.check_code("75522", p)
+        None    => test.fail("five characters is not a six-digit code")
+        Some(e) => test.assert_eq_str(totperr.code(e), "code-wrong-length")
+
+    test.case("and eight digits is well formed against eight-digit parameters")
+    match totpparams.with_digits(p, 8)
+        Err(e)   => test.fail(e.message())
+        Ok(wide) =>
+            match totphotp.check_code("82162583", wide)
+                None    => test.assert(true)
+                Some(e) => test.fail(e.message())

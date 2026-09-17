@@ -1,0 +1,190 @@
+// tests/totp_base32_tests.nv — base32 against RFC 4648 § 10, and the
+// three things this package does differently from the RFC's default.
+//
+// They COMPILE today and they FAIL at run, on the `not implemented:
+// totp-nv.totpbase32.<fn>` panic that is each body.
+//
+// WHERE THE VECTORS COME FROM.  RFC 4648 § 10 prints the base32
+// encoding of the seven strings "", "f", "fo", "foo", "foob", "fooba"
+// and "foobar".  They are the vectors every base32 in the world is
+// checked against, and they were recomputed before being written here.
+//
+// The RFC writes them PADDED, and `encode` writes no padding — so each
+// case asserts the bare form against `encode` and hands the padded
+// form to `decode`, which is exactly the asymmetry an authenticator
+// URI needs.
+
+use std.test
+use std.bytes
+use totpbase32
+
+// The encoding of a string, as this package writes it: no padding.
+fn enc(text: Str) -> Str
+    totpbase32.encode(bytes.from_str(text))
+
+// The decoding of base32 text, as a string.  The `Err` arm returns the
+// message so that a failing case names the refusal rather than a
+// length.
+fn dec(text: Str) -> Str
+    match totpbase32.decode(text)
+        Ok(raw) => bytes.to_str(raw)
+        Err(e)  => e.message()
+
+@test
+fn test_rfc_4648_section_10() [io]
+    // The seven published vectors, encoded.  The RFC's own column is
+    // padded to a multiple of eight; the padding is noted beside each.
+    test.case("the empty string encodes to nothing at all")
+    test.assert_eq_str(enc(""), "")
+
+    test.case("one to three bytes")
+    test.assert_eq_str(enc("f"), "MY")   // RFC: MY======
+    test.assert_eq_str(enc("fo"), "MZXQ")   // RFC: MZXQ====
+    test.assert_eq_str(enc("foo"), "MZXW6")   // RFC: MZXW6===
+
+    test.case("four and five bytes, where five fills a whole group")
+    test.assert_eq_str(enc("foob"), "MZXW6YQ")   // RFC: MZXW6YQ=
+    test.assert_eq_str(enc("fooba"), "MZXW6YTB")   // RFC: MZXW6YTB, already full
+
+    test.case("six bytes start a second group")
+    test.assert_eq_str(enc("foobar"), "MZXW6YTBOI")   // RFC: MZXW6YTBOI======
+
+@test
+fn test_the_same_seven_decode_with_the_rfcs_own_padding() [io]
+    // A decoder that refused the padded form would refuse the RFC's
+    // own examples, and a decoder that required it would refuse every
+    // authenticator URI.  Both are accepted.
+    test.case("padded, as the RFC prints them")
+    test.assert_eq_str(dec("MY======"), "f")
+    test.assert_eq_str(dec("MZXQ===="), "fo")
+    test.assert_eq_str(dec("MZXW6==="), "foo")
+    test.assert_eq_str(dec("MZXW6YQ="), "foob")
+    test.assert_eq_str(dec("MZXW6YTB"), "fooba")
+    test.assert_eq_str(dec("MZXW6YTBOI======"), "foobar")
+
+    test.case("and bare, as this package writes them")
+    test.assert_eq_str(dec("MY"), "f")
+    test.assert_eq_str(dec("MZXW6"), "foo")
+    test.assert_eq_str(dec("MZXW6YTBOI"), "foobar")
+
+    test.case("the empty string decodes to no bytes")
+    test.assert_eq_str(dec(""), "")
+
+@test
+fn test_decoding_is_case_insensitive() [io]
+    // A user copying a secret off a screen types it in lower case, and
+    // a server that refused that would be refusing the correct secret.
+    test.case("lower case decodes to the same bytes")
+    test.assert_eq_str(dec("mzxw6ytboi"), "foobar")
+
+    test.case("so does a mixture")
+    test.assert_eq_str(dec("MzXw6YtBoI"), "foobar")
+
+    test.case("and the character table says so one character at a time")
+    test.assert_eq(totpbase32.char_value(65), 0)   // 'A'
+    test.assert_eq(totpbase32.char_value(97), 0)   // 'a'
+    test.assert_eq(totpbase32.char_value(90), 25)   // 'Z'
+    test.assert_eq(totpbase32.char_value(122), 25)   // 'z'
+    test.assert_eq(totpbase32.char_value(50), 26)   // '2'
+    test.assert_eq(totpbase32.char_value(55), 31)   // '7'
+
+    test.case("the three digits the alphabet leaves out are not in it")
+    test.assert_eq(totpbase32.char_value(48), -1)   // '0'
+    test.assert_eq(totpbase32.char_value(49), -1)   // '1'
+    test.assert_eq(totpbase32.char_value(56), -1)   // '8'
+
+    test.case("and the padding character carries no bits")
+    test.assert_eq(totpbase32.char_value(61), -1)   // '='
+
+    test.case("the alphabet is the thirty-two characters of § 6")
+    test.assert_eq(str.len(totpbase32.TOTP_BASE32_ALPHABET), 32)
+    test.assert_eq_str(totpbase32.TOTP_BASE32_PAD, "=")
+    test.assert_eq(totpbase32.TOTP_BASE32_GROUP_BYTES, 5)
+    test.assert_eq(totpbase32.TOTP_BASE32_GROUP_CHARS, 8)
+
+@test
+fn test_a_character_outside_the_alphabet_is_named_with_its_offset() [io]
+    // "invalid base32" is a message an operator cannot act on.  The
+    // character and the offset are what tells them which one to fix.
+    test.case("a '1' where an 'I' was meant")
+    match totpbase32.decode("MZXW1YTB")
+        Ok(_)  => test.fail("'1' is not in RFC 4648's alphabet")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "secret-not-base32")
+            test.assert_eq(totperr.offset(e), 4)
+            test.assert(totperr.is_config_fault(e))
+
+    test.case("a '0' where an 'O' was meant, at its own offset")
+    match totpbase32.decode("0ZXW6YTB")
+        Ok(_)  => test.fail("'0' is not in RFC 4648's alphabet")
+        Err(e) => test.assert_eq(totperr.offset(e), 0)
+
+    test.case("a trailing group that cannot be completed")
+    match totpbase32.decode("MZXW6YTBO")
+        Ok(_)  => test.fail("nine characters is a group of eight and one left over")
+        Err(e) => test.assert_eq_str(totperr.code(e), "secret-truncated")
+
+@test
+fn test_the_buffer_forms_take_a_buffer_the_caller_owns() [io]
+    test.case("encoded_len sizes it, and the answer is that buffer")
+    let raw = bytes.from_str("foobar")
+    test.assert_eq(totpbase32.encoded_len(bytes.len(raw)), 10)
+    let out = bytes.zeros(totpbase32.encoded_len(bytes.len(raw)))
+    match totpbase32.encode_into(raw, out)
+        Err(e) => test.fail(e.message())
+        Ok(w)  => test.assert_eq_str(bytes.to_str(w), "MZXW6YTBOI")
+
+    test.case("a buffer of the wrong size is refused, not filled with what fits")
+    match totpbase32.encode_into(raw, bytes.zeros(4))
+        Ok(_)  => test.fail("four bytes cannot hold ten characters")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "buffer-wrong")
+            test.assert(totperr.is_program_fault(e))
+
+    test.case("decoded_len sizes the other direction, padded or not")
+    test.assert_eq(totpbase32.decoded_len("MZXW6YTBOI"), 6)
+    test.assert_eq(totpbase32.decoded_len("MZXW6YTBOI======"), 6)
+    test.assert_eq(totpbase32.decoded_len(""), 0)
+
+    test.case("and decode_into writes into it")
+    let buf = bytes.zeros(totpbase32.decoded_len("MZXW6YTBOI"))
+    match totpbase32.decode_into("MZXW6YTBOI", buf)
+        Err(e) => test.fail(e.message())
+        Ok(w)  => test.assert_eq_str(bytes.to_str(w), "foobar")
+
+    test.case("the twenty bytes of an authenticator secret are 32 characters")
+    test.assert_eq(totpbase32.encoded_len(20), 32)
+
+@test
+fn test_the_secret_is_a_checked_value() [io]
+    test.case("an empty key is refused, because an empty HMAC key works")
+    match totpbase32.secret(bytes.zeros(0))
+        Ok(_)  => test.fail("an empty secret is a credential anybody holds")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "secret-empty")
+            test.assert(totperr.is_config_fault(e))
+            test.assert_eq(totperr.offset(e), -1)
+
+    test.case("a secret holds the raw bytes, not the text")
+    match totpbase32.secret(bytes.from_str("12345678901234567890"))
+        Err(e) => test.fail(e.message())
+        Ok(s)  =>
+            test.assert_eq(bytes.len(totpbase32.secret_bytes(s)), 20)
+
+            test.case("and writes itself back in upper case with no padding")
+            test.assert_eq_str(totpbase32.secret_base32(s),
+                               "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+
+    test.case("the base32 a user typed round-trips through both")
+    match totpbase32.secret_of_base32("gezdgnbvgy3tqojqgezdgnbvgy3tqojq")
+        Err(e) => test.fail(e.message())
+        Ok(s)  =>
+            test.assert_eq_str(bytes.to_str(totpbase32.secret_bytes(s)),
+                               "12345678901234567890")
+            test.assert_eq_str(totpbase32.secret_base32(s),
+                               "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+
+    test.case("a secret that is not base32 keeps the character and the offset")
+    match totpbase32.secret_of_base32("GEZDG1BV")
+        Ok(_)  => test.fail("'1' is not in the alphabet")
+        Err(e) => test.assert_eq(totperr.offset(e), 5)

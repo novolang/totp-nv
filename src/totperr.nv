@@ -1,0 +1,193 @@
+// totperr — the refusals, and the three questions a program asks
+// about one.
+//
+// A one-time password deployment fails in three different ways, and a
+// log that records them together cannot tell them apart.
+//
+//   CONFIGURATION.  The secret in the database is not base32, the
+//   enrolment URI is malformed, the algorithm named in it is one
+//   nobody implements.  Nothing the user did caused it and nothing
+//   the user does will fix it; somebody has to correct a stored
+//   value.
+//
+//   A USER EVENT.  The six characters that arrived are five
+//   characters, or they contain a letter.  The person mistyped.  This
+//   is not a fault at all: it is the most common outcome a login form
+//   has, and a monitor that pages on it pages every day.
+//
+//   A PROGRAMMING MISTAKE.  Nine digits were asked for, or a time
+//   step of zero, or a verification window of minus one.  Those
+//   values cannot come from a user or from a database row; they come
+//   from the calling code, and the fix is a code change.
+//
+// `is_config_fault`, `is_user_fault` and `is_program_fault` divide
+// them.  A deployment that alerts on the first, counts the second and
+// fails its own tests on the third is a deployment that can be
+// operated.
+//
+// A CODE THAT DOES NOT MATCH IS NOT HERE.  `totptime.verify` answers
+// `Ok` with a `TotpMatch` whose `matched` is false, the same way
+// bcrypt-nv answers a wrong password.  A wrong code is an outcome of
+// the check, not a failure of it, and a caller that had to catch an
+// error to learn "no" would catch the database's errors with it.
+
+// What a call in this package refuses with.
+//
+// Every arm carries the numbers or the text a message needs, so a
+// report says what was wrong rather than "invalid".
+pub enum TotpError
+    // A character that is not in RFC 4648's base32 alphabet appeared
+    // in a secret.  `at` is the offset from the first character and
+    // `found` is the character itself, so an operator correcting a
+    // stored secret is told which one to look at.  The digits `0`,
+    // `1` and `8` are the usual ones: the alphabet leaves them out
+    // because they are what a reader turns `O`, `I` and `B` into.
+    TotpSecretNotBase32(at: Int, found: Str)
+    // The secret decoded to no bytes at all.  An empty key is a
+    // working HMAC key, which is the problem: every code it produces
+    // is correct and anybody can produce them.
+    TotpSecretEmpty
+    // The base32 text ended in the middle of a group.  Base32 encodes
+    // five bytes as eight characters, so a group of eight is complete
+    // and a group of 1, 3 or 6 characters cannot be finished.  `len`
+    // is the length of the trailing group.
+    TotpSecretTruncated(len: Int)
+    // A buffer handed to an encoder is the wrong size.  `len` is what
+    // arrived and `want` is what the input needs; the encoder refuses
+    // rather than writing what fits.
+    TotpBufferWrong(len: Int, want: Int)
+    // The digit count is outside the range this package admits.  Six
+    // and eight are what authenticators show; `lo` and `hi` are the
+    // bounds.
+    TotpDigitsOutOfRange(digits: Int, lo: Int, hi: Int)
+    // The time step is zero or negative.  The counter is a division
+    // by it (RFC 6238 § 4.2), so zero has no answer and a negative
+    // step runs time backwards.
+    TotpStepNotPositive(step: Int)
+    // A verification window counts steps backwards or forwards, and
+    // neither number may be negative.  Both are carried, because a
+    // caller that got the argument order wrong wants to see the pair.
+    TotpWindowNegative(steps_back: Int, steps_ahead: Int)
+    // The code submitted is not the length the parameters say.  `len`
+    // is what arrived and `want` is `digits`.  A user event: somebody
+    // pressed return early.
+    TotpCodeWrongLength(len: Int, want: Int)
+    // The code submitted contains something that is not a decimal
+    // digit.  `at` is the offset and `found` is the character.  A user
+    // event: somebody pasted a space, or typed a letter.
+    TotpCodeNotDigits(at: Int, found: Str)
+    // The `otpauth://` URI could not be read.  `what` names the part
+    // the parse stopped in — `"scheme"`, `"type"`, `"label"`,
+    // `"secret"`, `"query"` — and `at` is the offset from the first
+    // character, so two tools reading the same URI name the same
+    // place.
+    TotpUriMalformed(at: Int, what: Str)
+    // The URI names an algorithm this package does not implement.
+    // `found` is the text as it was written, so a log can show
+    // `"SHA3-256"` rather than "unsupported".
+    TotpUriUnknownAlgorithm(found: Str)
+
+// message renders the refusal as one line of prose, with the numbers
+// in it.
+//
+// `Result<_, TotpError>` requires this impl: SPEC § 3.4 admits a
+// `Result` error type only if it implements `Error`.
+impl Error for TotpError
+    // Answer the one-line report: what was refused, and with which
+    // numbers.
+    //
+    // ```novo
+    // use totperr
+    //
+    // fn main() [io]
+    //     let e = TotpDigitsOutOfRange(digits: 9, lo: 6, hi: 8)
+    //     println(e.message())
+    //     // totp: 9 digits were asked for and this package writes 6 to 8
+    // ```
+    fn message(self) -> Str
+        todo("totp-nv.totperr.TotpError.message")
+
+// Whether the refusal is about a stored value somebody has to
+// correct.
+//
+// True for `TotpSecretNotBase32`, `TotpSecretEmpty`,
+// `TotpSecretTruncated`, `TotpUriMalformed` and
+// `TotpUriUnknownAlgorithm`.  The secret in the database, or the
+// enrolment URI that produced it, is wrong; no user action reaches
+// it.  This is the class worth an alert.
+//
+// ```novo
+// use totperr
+//
+// fn main() [io]
+//     let e = TotpSecretNotBase32(at: 3, found: "1")
+//     println("${totperr.is_config_fault(e)}")   // true
+// ```
+pub fn is_config_fault(e: TotpError) -> Bool []
+    todo("totp-nv.totperr.is_config_fault")
+
+// Whether the refusal is something the person at the keyboard did.
+//
+// True for `TotpCodeWrongLength` and `TotpCodeNotDigits`.  The fix is
+// that they type it again.  A login endpoint counts these and does
+// not alert on them; a rate limiter is what they feed.
+//
+// ```novo
+// use totperr
+//
+// fn main() [io]
+//     let e = TotpCodeWrongLength(len: 5, want: 6)
+//     println("${totperr.is_user_fault(e)}")     // true
+// ```
+pub fn is_user_fault(e: TotpError) -> Bool []
+    todo("totp-nv.totperr.is_user_fault")
+
+// Whether the refusal is about an argument the calling code chose.
+//
+// True for `TotpBufferWrong`, `TotpDigitsOutOfRange`,
+// `TotpStepNotPositive` and `TotpWindowNegative`.  None of those
+// values can arrive from a user or from a stored row, so one of them
+// in production is a bug that a test should have caught.
+//
+// ```novo
+// use totperr
+//
+// fn main() [io]
+//     let e = TotpStepNotPositive(step: 0)
+//     println("${totperr.is_program_fault(e)}")  // true
+// ```
+pub fn is_program_fault(e: TotpError) -> Bool []
+    todo("totp-nv.totperr.is_program_fault")
+
+// Where in a piece of text the refusal was found, or -1 when the
+// refusal is not about a position in text.
+//
+// `TotpSecretNotBase32`, `TotpCodeNotDigits` and `TotpUriMalformed`
+// carry an offset; the others answer -1, which is a value a caller
+// can print and not an offset it could use by mistake.
+//
+// ```novo
+// use totperr
+//
+// fn main() [io]
+//     let bad = TotpSecretNotBase32(at: 3, found: "1")
+//     println("${totperr.offset(bad)}")             // 3
+//     println("${totperr.offset(TotpSecretEmpty)}")  // -1
+// ```
+pub fn offset(e: TotpError) -> Int []
+    todo("totp-nv.totperr.offset")
+
+// The refusal as a short stable token, for a log that is grepped
+// rather than read: `"secret-not-base32"`, `"secret-empty"`,
+// `"secret-truncated"`, `"buffer-wrong"`, `"digits-out-of-range"`,
+// `"step-not-positive"`, `"window-negative"`, `"code-wrong-length"`,
+// `"code-not-digits"`, `"uri-malformed"`, `"uri-unknown-algorithm"`.
+//
+// ```novo
+// use totperr
+//
+// fn main() [io]
+//     println(totperr.code(TotpSecretEmpty))   // secret-empty
+// ```
+pub fn code(e: TotpError) -> Str []
+    todo("totp-nv.totperr.code")

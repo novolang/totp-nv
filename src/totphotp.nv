@@ -1,0 +1,222 @@
+// totphotp — HOTP, the counter-based one-time password of RFC 4226.
+//
+// THE WHOLE ALGORITHM.  RFC 4226 § 5.3 defines
+//
+//     HOTP(K, C) = Truncate(HMAC-SHA-1(K, C)) mod 10^Digit
+//
+// where `K` is the shared secret, `C` is an eight-byte counter and
+// `Truncate` is the dynamic truncation below.  There is nothing else
+// in it.  TOTP is the same function with the counter computed from a
+// clock, which is why `totptime` is a thin layer over this module and
+// not a second algorithm.
+//
+// DYNAMIC TRUNCATION, AND WHY IT IS ITS OWN FUNCTION.  The last four
+// bits of the last byte of the digest are an offset; the four bytes
+// at that offset, with the top bit cleared, are a 31-bit number; the
+// code is that number modulo ten to the power of the digit count.
+// The offset makes the four bytes depend on the whole digest rather
+// than on a fixed position.  The top bit is cleared because some
+// implementations would treat the four bytes as a signed integer, and
+// RFC 4226 § 5.3 says so in as many words: it "avoids confusion about
+// signed vs. unsigned modulo computations".
+//
+// It is published separately because it is where a from-scratch HOTP
+// goes wrong, and because RFC 4226 Appendix D prints the intermediate
+// HMAC and the truncated decimal for counters 0 to 9.  An
+// implementation that produces wrong digits can be bisected against
+// those two columns without a debugger.
+//
+// THE CODE IS A STRING, NOT AN `Int`.  `012345` is a valid six-digit
+// code, and an `Int` holding it is 12345.  Every implementation that
+// returns an integer has to zero-pad it again at the edge, and the
+// one that forgets rejects one user in ten.  A code leaves this
+// package as a `Str` of exactly `digits` characters and is compared
+// as bytes.
+
+use std.bytes
+
+// The mask RFC 4226 § 5.3 applies to the first truncated byte:
+// 0x7FFFFFFF over the four bytes, which is the same as clearing the
+// top bit of the first.  The largest value dynamic truncation can
+// answer, and one reason a nine-digit code would be nonsense: 2^31
+// is ten digits and the top one would almost always be 0, 1 or 2.
+pub const TOTP_TRUNCATION_MASK = 2147483647
+
+// Bytes the counter occupies in the HMAC message: 8, big-endian,
+// RFC 4226 § 5.1.
+pub const TOTP_COUNTER_BYTES = 8
+
+// The counter as the eight bytes the HMAC is taken over.
+//
+// Big-endian, most significant byte first, which RFC 4226 § 5.1 calls
+// the 8-byte counter value and what every implementation agrees on.
+// Published so that a wrong byte order — the single most common
+// mistake in a from-scratch HOTP — is one assertion away from being
+// found.
+//
+// ```novo
+// use std.bytes
+// use totphotp
+//
+// fn main() [io]
+//     println(bytes.to_hex(totphotp.counter_bytes(1)))
+//     // 0000000000000001
+// ```
+pub fn counter_bytes(counter: Int) -> Bytes []
+    todo("totp-nv.totphotp.counter_bytes")
+
+// The HMAC of the counter under the secret: the intermediate value
+// RFC 4226 Appendix D prints.
+//
+// 20, 32 or 64 bytes, depending on the algorithm the parameters name.
+// This is the one call that reaches crypto-nv — `hashing.hmac_sha1`,
+// `hmac_sha256` or `hmac_sha512` — and it is public so that a port
+// can be checked against the appendix before any truncation is
+// involved.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totphotp
+// use totpparams
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             match totphotp.hmac_of_counter(s, 0, totpparams.default_params())
+//                 Ok(d)  => println(bytes.to_hex(d))
+//                 Err(e) => println(e.message())
+//             // cc93cf18508d94934c64b65d8ba7667fb7cde4b0
+// ```
+pub fn hmac_of_counter(s: TotpSecret, counter: Int, p: TotpParams) -> Result<Bytes, TotpError> []
+    todo("totp-nv.totphotp.hmac_of_counter")
+
+// The dynamic truncation of RFC 4226 § 5.3: a 31-bit number read out
+// of the digest.
+//
+// The low four bits of the last byte give an offset; the four bytes
+// at that offset, with the top bit of the first cleared, are the
+// answer.  `TotpBufferWrong` when the digest is shorter than 20
+// bytes, because the offset can be as large as 15 and four bytes
+// have to follow it.
+//
+// The answer for Appendix D's counter of 0 is 1284755224, whose last
+// six digits are the published code 755224.
+//
+// ```novo
+// use std.bytes
+// use totphotp
+//
+// fn main() [io]
+//     let digest = bytes.from_hex("cc93cf18508d94934c64b65d8ba7667fb7cde4b0")
+//     match digest
+//         None    => println("not hex")
+//         Some(d) =>
+//             match totphotp.dynamic_truncate(d)
+//                 Ok(v)  => println("${v}")    // 1284755224
+//                 Err(e) => println(e.message())
+// ```
+pub fn dynamic_truncate(digest: Bytes) -> Result<Int, TotpError> []
+    todo("totp-nv.totphotp.dynamic_truncate")
+
+// The truncated value as the code a user reads: `value` modulo
+// `10^digits`, written with leading zeros to exactly `digits`
+// characters.
+//
+// `TotpDigitsOutOfRange` outside 6 to 8.  This is where the leading
+// zero survives: 82162583 at six digits is `"162583"`, and 1000000 at
+// six digits is `"000000"`, which is a code a user will be shown and
+// a server must accept.
+//
+// ```novo
+// use totphotp
+//
+// fn main() [io]
+//     match totphotp.code_of_truncated(1284755224, 6)
+//         Ok(c)  => println(c)     // 755224
+//         Err(e) => println(e.message())
+// ```
+pub fn code_of_truncated(value: Int, digits: Int) -> Result<Str, TotpError> []
+    todo("totp-nv.totphotp.code_of_truncated")
+
+// The HOTP code for this secret and this counter.
+//
+// The three functions above, composed: the counter's eight bytes, the
+// HMAC, the truncation, the modulo and the padding.  The answer is
+// exactly `p.digits` characters, all of them decimal digits.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totphotp
+// use totpparams
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             match totphotp.hotp(s, 0, totpparams.default_params())
+//                 Ok(c)  => println(c)     // 755224
+//                 Err(e) => println(e.message())
+// ```
+pub fn hotp(s: TotpSecret, counter: Int, p: TotpParams) -> Result<Str, TotpError> []
+    todo("totp-nv.totphotp.hotp")
+
+// Whether a submitted code is the one this counter produces.
+//
+// The comparison is `digest.ct_eq` from crypto-nv, never `==`.  A
+// string comparison stops at the first character that differs, so the
+// time it takes says how many leading characters were right, and an
+// attacker who can measure it recovers a code one character at a time
+// instead of guessing a million.
+//
+// `Ok(false)` for a code that is well formed and wrong — that is an
+// outcome and not a failure.  `Err` for a code that is not `p.digits`
+// decimal digits, which `totperr.is_user_fault` reports as the
+// mistyping it is.
+//
+// There is no counter look-ahead here.  RFC 4226 § 7.4's
+// resynchronisation window is a loop over this function and a new
+// counter the caller stores, and this package stores nothing.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totphotp
+// use totpparams
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             match totphotp.verify_at(s, 0, "755224", totpparams.default_params())
+//                 Ok(ok) => println("${ok}")    // true
+//                 Err(e) => println(e.message())
+// ```
+pub fn verify_at(s: TotpSecret, counter: Int, code: Str,
+                 p: TotpParams) -> Result<Bool, TotpError> []
+    todo("totp-nv.totphotp.verify_at")
+
+// Whether a submitted code is even the right shape, and why not.
+//
+// `Some(TotpCodeWrongLength)` when it is not `p.digits` characters
+// and `Some(TotpCodeNotDigits)` naming the first character that is
+// not a decimal digit; `None` when it is well formed.
+//
+// It is public because a login form wants to answer "that is five
+// digits" before it does an HMAC, and because the two refusals are
+// the ones a deployment counts rather than alerts on.
+//
+// ```novo
+// use totperr
+// use totphotp
+// use totpparams
+//
+// fn main() [io]
+//     match totphotp.check_code("12345", totpparams.default_params())
+//         Some(e) => println(totperr.code(e))   // code-wrong-length
+//         None    => println("well formed")
+// ```
+pub fn check_code(code: Str, p: TotpParams) -> ?TotpError []
+    todo("totp-nv.totphotp.check_code")

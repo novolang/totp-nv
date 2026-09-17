@@ -1,0 +1,251 @@
+// totpuri — the `otpauth://` URI an authenticator is enrolled with,
+// both ways.
+//
+// WHAT THE URI IS.  Enrolling a phone means moving a secret and five
+// parameters to it, and what every authenticator reads is one string,
+// usually drawn as a QR code:
+//
+//     otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP
+//         &issuer=Example&algorithm=SHA1&digits=6&period=30
+//
+// The scheme is `otpauth`, the host is the type — `totp` or `hotp` —
+// the path is the LABEL, and the query carries the secret and the
+// parameters.  There is no RFC.  The format is the Key Uri Format
+// page in Google's `google-authenticator` wiki, and it is what every
+// implementation follows.
+//
+// IT IS UNDER-SPECIFIED IN TWO PLACES, AND THIS PACKAGE SAYS WHAT IT
+// DOES ABOUT BOTH.
+//
+//   1. THE ISSUER IS WRITTEN TWICE.  The label may be
+//   `Issuer:account` and there is also an `issuer` parameter, and the
+//   format recommends both while saying only that they SHOULD agree.
+//   Nothing says what to do when they disagree.  Here: `format`
+//   writes both, always, because an authenticator that reads only one
+//   of them exists in each direction.  `parse` prefers the `issuer`
+//   PARAMETER when both are present, because it is the one that
+//   needs no percent-decoding of a separator, and falls back to the
+//   label's prefix when there is no parameter.  A disagreement is not
+//   an error: the URI is still usable and refusing it would lock a
+//   user out of an account they can otherwise reach.
+//
+//   2. A LABEL THAT CONTAINS A COLON OR A SPACE.  The colon between
+//   the issuer and the account is a separator, so a colon INSIDE
+//   either part has to be percent-encoded as `%3A` — and a `:` in an
+//   account name is common, because an account name is often a URL or
+//   an identifier.  A space is `%20`.  Here: `format` percent-encodes
+//   both parts and then joins them with a literal `:`, so the FIRST
+//   UNENCODED colon is the separator and every later one is data.
+//   `parse` splits on that first unencoded colon and then decodes
+//   each part.  It also accepts `+` as a space in the query, because
+//   some implementations write it there, but never writes one.
+//
+// The other thing worth knowing is that the secret is written WITHOUT
+// base32 padding.  A `=` in a query string has to be percent-encoded,
+// and several authenticators reject the URI rather than decoding it.
+// `totpbase32.encode` writes no padding for exactly this reason.
+
+// An enrolment URI, parsed.
+//
+// A plain struct rather than a `@value` one because it is a `Result`
+// payload — `parse` answers one — and a `@value` struct cannot be
+// one (E2015).
+//
+// ```novo
+// use totpuri
+// use totpparams
+//
+// fn main() [io]
+//     match totpuri.parse("otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP")
+//         Ok(u)  => println(u.account)     // alice
+//         Err(e) => println(e.message())
+// ```
+pub struct TotpUri
+    // Who issued the credential: the `issuer` parameter, or the
+    // label's prefix when there is no parameter, or `""` when there
+    // is neither.  Decoded, so a `%20` here is a space.
+    issuer: Str
+    // Which account it is for: the part of the label after the first
+    // unencoded colon, or the whole label when there is none.
+    // Decoded.
+    account: Str
+    // The shared secret, already decoded from the `secret` parameter's
+    // base32.
+    secret: TotpSecret
+    // The algorithm, digit count and step the URI named, with this
+    // package's defaults for the parameters it left out.  The window
+    // is the default one: a window is the verifying server's
+    // decision and the URI has no parameter for it.
+    params: TotpParams
+    // The HOTP counter from the `counter` parameter, or -1 when this
+    // is a TOTP URI.  The format requires the parameter for
+    // `otpauth://hotp/` and forbids it otherwise, so the sentinel is
+    // the same question as `is_hotp`.
+    counter: Int
+
+// The scheme every enrolment URI starts with: `"otpauth"`.
+pub const TOTP_URI_SCHEME = "otpauth"
+
+// The type a time-based URI names: `"totp"`.
+pub const TOTP_URI_TYPE_TOTP = "totp"
+
+// The type a counter-based URI names: `"hotp"`.
+pub const TOTP_URI_TYPE_HOTP = "hotp"
+
+// The counter field's value for a URI that is time-based: -1.
+pub const TOTP_URI_NO_COUNTER = -1
+
+// A time-based enrolment URI's parts.
+//
+// Cannot fail: every value it takes has already been checked.  The
+// `params`' window is carried but never written — see `format`.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totpparams
+// use totpuri
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             let u = totpuri.uri("Example", "alice", s,
+//                                 totpparams.default_params())
+//             println(u.issuer)     // Example
+// ```
+pub fn uri(issuer: Str, account: Str, s: TotpSecret, p: TotpParams) -> TotpUri []
+    todo("totp-nv.totpuri.uri")
+
+// A counter-based enrolment URI's parts.
+//
+// The same, with the HOTP counter the authenticator starts from.  The
+// `period` is not written for an HOTP URI, because there are no time
+// steps in one.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totpparams
+// use totpuri
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             let u = totpuri.hotp_uri("Example", "alice", s,
+//                                      totpparams.default_params(), 0)
+//             println("${totpuri.is_hotp(u)} ${u.counter}")   // true 0
+// ```
+pub fn hotp_uri(issuer: Str, account: Str, s: TotpSecret, p: TotpParams, counter: Int) -> TotpUri []
+    todo("totp-nv.totpuri.hotp_uri")
+
+// Whether this URI is the counter-based kind.
+//
+// True when `counter` is not `TOTP_URI_NO_COUNTER`.  The two kinds
+// are written differently and read by different functions of this
+// package — `totphotp.hotp` against `totptime.totp` — so a consumer
+// asks this before it decides which.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totpparams
+// use totpuri
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             let u = totpuri.uri("Example", "alice", s,
+//                                 totpparams.default_params())
+//             println("${totpuri.is_hotp(u)}")   // false
+// ```
+pub fn is_hotp(u: TotpUri) -> Bool []
+    todo("totp-nv.totpuri.is_hotp")
+
+// The label as it is written in the path: the issuer, a colon, and
+// the account, each percent-encoded.
+//
+// `"Example:alice@example.com"` for an issuer and an account, and
+// just the account when the issuer is empty.  Published because the
+// label is the part implementations disagree about, and a test that
+// wants to assert the encoding of one colon should not have to
+// assemble a whole URI to see it.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totpparams
+// use totpuri
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             let u = totpuri.uri("ACME Co", "alice", s,
+//                                 totpparams.default_params())
+//             println(totpuri.label(u))     // ACME%20Co:alice
+// ```
+pub fn label(u: TotpUri) -> Str []
+    todo("totp-nv.totpuri.label")
+
+// The whole URI as the string a QR encoder takes.
+//
+// Writes the secret in upper-case base32 with no padding, and writes
+// `issuer`, `algorithm`, `digits` and — for a TOTP URI — `period`,
+// even when they are the defaults, because an authenticator that
+// guesses a default that is not this one produces codes nobody
+// accepts.  The label carries the issuer as well; see the module
+// comment.  `t0` is never written: the format has no parameter for
+// it, so a deployment that moved it cannot enrol anybody.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totpparams
+// use totpuri
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             let u = totpuri.uri("Example", "alice", s,
+//                                 totpparams.default_params())
+//             println(totpuri.format(u))
+//     // otpauth://totp/Example:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
+//     //     &issuer=Example&algorithm=SHA1&digits=6&period=30
+// ```
+pub fn format(u: TotpUri) -> Str []
+    todo("totp-nv.totpuri.format")
+
+// Read an enrolment URI.
+//
+// `TotpUriMalformed` naming the part it stopped in — `"scheme"`,
+// `"type"`, `"label"`, `"secret"`, `"query"` — and the offset it
+// stopped at.  A missing `secret` parameter is `"secret"`, not
+// `"query"`, because that is the one parameter without which there is
+// nothing.  An `algorithm` this package does not implement is
+// `TotpUriUnknownAlgorithm` carrying the text as written.  A secret
+// that is not base32 keeps `totpbase32`'s own refusal, with the
+// offset inside the secret rather than inside the URI.
+//
+// Parameters the URI leaves out take this package's defaults, which
+// are the ones the format itself specifies: SHA1, 6 digits, a thirty
+// second period.
+//
+// ```novo
+// use totpalg
+// use totpuri
+//
+// fn main() [io]
+//     let text = "otpauth://totp/ACME%20Co:alice?secret=GEZDGNBVGY3TQOJQ&digits=8"
+//     match totpuri.parse(text)
+//         Err(e) => println(e.message())
+//         Ok(u)  =>
+//             println("${u.issuer} ${u.account} ${u.params.digits}")
+//             // ACME Co alice 8
+//             println(totpalg.alg_name(u.params.algorithm))   // SHA1
+// ```
+pub fn parse(text: Str) -> Result<TotpUri, TotpError> []
+    todo("totp-nv.totpuri.parse")

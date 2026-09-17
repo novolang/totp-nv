@@ -1,0 +1,299 @@
+// totptime — TOTP, and the two decisions that shape this package.
+//
+// TOTP IS HOTP WITH A COUNTER MADE OF TIME.  RFC 6238 § 4.2:
+//
+//     T = (Unix time - T0) / X
+//     TOTP(K, T) = HOTP(K, T)
+//
+// where `X` is the time step in seconds, 30 by default, and `T0` is
+// the epoch the steps are counted from, the Unix epoch by default.
+// The division is integer division, so every second in one step gives
+// the same counter and the same code.
+//
+// THE TIME ARRIVES AS A PARAMETER.  This is a `core` package and a
+// `core` package may not read a clock.  So a caller writes
+//
+//     let now = totptime.instant(time.unix_seconds())   // [time], in the host
+//     totptime.verify(s, code, p, now)                  // [], here
+//
+// and the `[time]` is spent once, in the caller, where a reader can
+// see it.  That is the layer rule; what it buys is worth more than
+// the rule.  A test verifies at any instant it likes with no fake
+// clock and no injected provider.  A support tool can answer "was
+// this code valid when the customer says they typed it", which a
+// library that read the clock itself cannot answer at all.  And a
+// replay of a request log gives the same answers it gave the first
+// time, so an incident can be reconstructed instead of re-lived.
+//
+// VERIFICATION ANSWERS WHICH STEP MATCHED.  A `verify` that answered
+// only true or false could not stop a replay, and RFC 6238 § 5.2
+// requires exactly that: "the verifier MUST NOT accept the second
+// attempt of the OTP after the successful validation has been issued
+// for the first OTP".  A code is valid for thirty seconds; an
+// attacker who reads one off a phishing page has the rest of that
+// window to use it, unless the server knows it has already accepted
+// that step.
+//
+// So `verify` answers a `TotpMatch` carrying the counter that
+// matched, and the caller stores it against the account and refuses
+// anything at or below it.  The store is the caller's, because it is
+// the caller who has a database; `is_replay` is the comparison, so
+// the rule is a function and not a paragraph.
+
+// A point in time, as seconds since the Unix epoch.
+//
+// A plain struct rather than a `@value` one because it is carried
+// inside `TotpMatch`, which is a `Result` payload, and a `@value`
+// struct may not be one (E2015).
+//
+// A named type rather than a bare `Int` so that a signature cannot
+// take the step length and the instant in the wrong order, and so
+// that the place a program spends `[time]` is greppable: every call
+// to `instant` is one.
+//
+// ```novo
+// use totptime
+//
+// fn main() [io]
+//     println("${totptime.unix_seconds(totptime.instant(59))}")   // 59
+// ```
+pub struct TotpInstant
+    // Seconds since 1970-01-01T00:00:00Z, counted as RFC 6238 § 4.1
+    // counts them: UTC, no leap seconds.
+    seconds: Int
+
+// An instant from a Unix timestamp.
+//
+// The caller reads its own clock — `time.unix_seconds()`, a header a
+// proxy set, a fixture — and this wraps it.  That call is where the
+// `[time]` is spent, and this package never spends any.
+//
+// ```novo
+// use totptime
+//
+// fn main() [io]
+//     let now = totptime.instant(1111111109)
+//     println("${totptime.unix_seconds(now)}")   // 1111111109
+// ```
+pub fn instant(unix_seconds: Int) -> TotpInstant []
+    todo("totp-nv.totptime.instant")
+
+// The Unix timestamp an instant holds.
+//
+// ```novo
+// use totptime
+//
+// fn main() [io]
+//     println("${totptime.unix_seconds(totptime.instant(0))}")   // 0
+// ```
+pub fn unix_seconds(t: TotpInstant) -> Int []
+    todo("totp-nv.totptime.unix_seconds")
+
+// An instant a number of seconds later, or earlier for a negative
+// number.
+//
+// So that a test walking across a step boundary writes
+// `totptime.plus(now, 30)` rather than unwrapping the integer and
+// wrapping it again.
+//
+// ```novo
+// use totptime
+//
+// fn main() [io]
+//     println("${totptime.unix_seconds(totptime.plus(totptime.instant(59), 1))}")
+//     // 60
+// ```
+pub fn plus(t: TotpInstant, seconds: Int) -> TotpInstant []
+    todo("totp-nv.totptime.plus")
+
+// The counter this instant falls in: `(unix_seconds - t0) / step`,
+// RFC 6238 § 4.2.
+//
+// Integer division, so every second within one step answers the same
+// counter.  Published because it is the whole of the difference
+// between TOTP and HOTP, and because a support engineer asking "which
+// step was that" has nowhere else to ask.  An instant before T0
+// answers a negative counter rather than clamping: a clamp would make
+// two different times produce the same code.
+//
+// ```novo
+// use totptime
+// use totpparams
+//
+// fn main() [io]
+//     let p = totpparams.default_params()
+//     println("${totptime.counter_at(p, totptime.instant(59))}")           // 1
+//     println("${totptime.counter_at(p, totptime.instant(1111111109))}")   // 37037036
+// ```
+pub fn counter_at(p: TotpParams, t: TotpInstant) -> Int []
+    todo("totp-nv.totptime.counter_at")
+
+// When a counter's step began: `t0 + counter * step`.
+//
+// The inverse of `counter_at`, for a tool that prints the interval a
+// code was valid in.
+//
+// ```novo
+// use totptime
+// use totpparams
+//
+// fn main() [io]
+//     let p = totpparams.default_params()
+//     println("${totptime.unix_seconds(totptime.step_start(p, 1))}")   // 30
+// ```
+pub fn step_start(p: TotpParams, counter: Int) -> TotpInstant []
+    todo("totp-nv.totptime.step_start")
+
+// How many seconds of this step remain after this instant: 1 to
+// `step_seconds`.
+//
+// The countdown an authenticator draws as a shrinking ring, and what
+// a login form shows beside the field.  It answers `step_seconds` at
+// the first second of a step and 1 at the last.
+//
+// ```novo
+// use totptime
+// use totpparams
+//
+// fn main() [io]
+//     let p = totpparams.default_params()
+//     println("${totptime.seconds_remaining(p, totptime.instant(59))}")   // 1
+// ```
+pub fn seconds_remaining(p: TotpParams, t: TotpInstant) -> Int []
+    todo("totp-nv.totptime.seconds_remaining")
+
+// The TOTP code for this secret at this instant.
+//
+// `counter_at` and then `totphotp.hotp`.  The answer is exactly
+// `p.digits` characters, all of them decimal digits, and it is the
+// same for every second of the step.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totptime
+// use totpparams
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             let p = totpparams.default_params()
+//             match totptime.totp(s, p, totptime.instant(59))
+//                 Ok(c)  => println(c)     // 287082
+//                 Err(e) => println(e.message())
+// ```
+pub fn totp(s: TotpSecret, p: TotpParams, t: TotpInstant) -> Result<Str, TotpError> []
+    todo("totp-nv.totptime.totp")
+
+// What a verification found.
+//
+// A plain struct rather than a `@value` one because it is a `Result`
+// payload and a `@value` struct cannot be one (E2015).
+//
+// The point of the type is `counter`: a verification that answered
+// only `matched` could not stop a replay, because the caller would
+// have nothing to remember.  See the module comment and RFC 6238
+// § 5.2.
+//
+// ```novo
+// use totptime
+//
+// fn main() [io]
+//     println("${totptime.no_match(totptime.instant(59)).matched}")   // false
+// ```
+pub struct TotpMatch
+    // Whether any step in the window produced the submitted code.
+    matched: Bool
+    // The counter that produced it, or -1 when nothing matched.  This
+    // is what a caller stores against the account, and what it
+    // compares the next submission against.
+    counter: Int
+    // How far that counter is from the one the instant falls in:
+    // negative for a code from the past, 0 for the current step,
+    // positive for one from the future.  `0` when nothing matched.
+    //
+    // Worth recording: a deployment whose offsets are consistently
+    // -1 has users who submit slowly, and one with positive offsets
+    // has clients whose clocks run fast.  Those are different
+    // problems and the window that fixes them is not the same window.
+    offset_steps: Int
+    // The counter the instant itself falls in, whether or not
+    // anything matched.  Carried so that a log line about a failed
+    // attempt still says when the server thought it was.
+    at_counter: Int
+
+// Verify a submitted code against every step in the window.
+//
+// The steps are `counter_at(p, t) - w.steps_back` through
+// `counter_at(p, t) + w.steps_ahead`, and the answer names which of
+// them produced the code.  Every comparison is `digest.ct_eq` from
+// crypto-nv, never `==`; see `totphotp.verify_at`.
+//
+// `Ok` with `matched` false is a code that is well formed and wrong,
+// which is an outcome and not a failure.  `Err` is a code that is not
+// `p.digits` decimal digits, or a parameter set that is not usable.
+//
+// A CALLER MUST STILL REFUSE A REPLAY.  A matching code stays
+// matching for the rest of its step.  Store `m.counter` against the
+// account and pass it to `is_replay` on the next submission; RFC 6238
+// § 5.2 requires it, and nothing this package can do will do it for
+// you.
+//
+// ```novo
+// use std.bytes
+// use totpbase32
+// use totptime
+// use totpparams
+//
+// fn main() [io]
+//     match totpbase32.secret(bytes.from_str("12345678901234567890"))
+//         Err(e) => println(e.message())
+//         Ok(s)  =>
+//             let p = totpparams.default_params()
+//             match totptime.verify(s, "287082", p, totptime.instant(89))
+//                 Err(e) => println(e.message())
+//                 Ok(m)  =>
+//                     println("${m.matched} ${m.counter} ${m.offset_steps}")
+//                     // true 1 -1 — the code of the previous step, still accepted
+// ```
+pub fn verify(s: TotpSecret, code: Str, p: TotpParams,
+              t: TotpInstant) -> Result<TotpMatch, TotpError> []
+    todo("totp-nv.totptime.verify")
+
+// The answer that nothing matched, at this instant.
+//
+// What `verify` builds when no step in the window produced the code,
+// and what a caller's own short circuit — a rate limiter, a disabled
+// account — answers so that the two paths have one shape.
+//
+// ```novo
+// use totptime
+//
+// fn main() [io]
+//     let m = totptime.no_match(totptime.instant(59))
+//     println("${m.matched} ${m.counter}")   // false -1
+// ```
+pub fn no_match(t: TotpInstant) -> TotpMatch []
+    todo("totp-nv.totptime.no_match")
+
+// Whether this match is a code the account has already used.
+//
+// True when the match is at or below the last counter the caller
+// accepted for that account.  A caller stores `m.counter` on every
+// successful verification and asks this on the next one; that pair is
+// what RFC 6238 § 5.2 requires, and it is the whole of the replay
+// defence.
+//
+// `last_accepted` of -1 means the account has never verified, so
+// nothing is a replay.
+//
+// ```novo
+// use totptime
+//
+// fn main() [io]
+//     let m = totptime.no_match(totptime.instant(59))
+//     println("${totptime.is_replay(m, -1)}")   // false
+// ```
+pub fn is_replay(m: TotpMatch, last_accepted: Int) -> Bool []
+    todo("totp-nv.totptime.is_replay")

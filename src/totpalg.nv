@@ -1,0 +1,140 @@
+// totpalg — which hash the HMAC is taken under.
+//
+// HOTP is an HMAC and a truncation, and RFC 4226 § 5.1 specifies
+// HMAC-SHA-1.  RFC 6238 § 1.2 adds SHA-256 and SHA-512 for TOTP, so
+// three are possible and the `otpauth://` URI has an `algorithm`
+// parameter that names one of them.
+//
+// SHA-1 IS THE DEFAULT AND IS NOT DEPRECATED HERE.  That is worth
+// being direct about, because a reader who knows that SHA-1 is broken
+// for signatures will expect this package to say so.  Two facts
+// decide it:
+//
+//   HMAC-SHA-1 is not affected by the SHA-1 collision attacks.  Those
+//   attacks find two messages with the same digest.  An HMAC's
+//   security rests on the compression function under a secret key,
+//   and RFC 6194 and NIST SP 800-131A both continue to admit
+//   HMAC-SHA-1 for that reason.
+//
+//   An authenticator handed SHA-256 will often compute SHA-1 anyway.
+//   Several widely deployed authenticator applications ignore the
+//   `algorithm` parameter of the enrolment URI.  A server that
+//   enrolled a user with SHA-256 and verifies with SHA-256 will then
+//   reject every code that user produces, and the user will be told
+//   their code is wrong.  That is a fact about whether a program
+//   works, so it is in the README's rules and not only here.
+//
+// The interoperable choice is SHA-1 with six digits and a thirty
+// second step.  The other two are here because a protocol may name
+// them and because RFC 6238's own test vectors cover all three.
+
+// Which hash the HMAC is taken under.
+//
+// The three RFC 6238 § 1.2 admits, and no arm meaning "whatever the
+// URI said": an unknown `algorithm` parameter is
+// `TotpUriUnknownAlgorithm` and not a fourth value to match on.
+//
+// ```novo
+// use totpalg
+//
+// fn main() [io]
+//     println(totpalg.alg_name(TotpAlgSha1))   // SHA1
+// ```
+pub enum TotpAlgorithm
+    // HMAC-SHA-1, RFC 4226 § 5.1.  The default, and what every
+    // authenticator implements.  20-byte digest, 64-byte block.
+    TotpAlgSha1
+    // HMAC-SHA-256, admitted for TOTP by RFC 6238 § 1.2.  32-byte
+    // digest, 64-byte block.
+    TotpAlgSha256
+    // HMAC-SHA-512, admitted for TOTP by RFC 6238 § 1.2.  64-byte
+    // digest, 128-byte block.
+    TotpAlgSha512
+
+// The algorithm this package uses when nobody names one: SHA-1.
+//
+// Read the module comment before changing it in a deployment.  It is
+// a function rather than a constant because a constant cannot hold an
+// enum value.
+//
+// ```novo
+// use totpalg
+//
+// fn main() [io]
+//     println(totpalg.alg_name(totpalg.default_algorithm()))   // SHA1
+// ```
+pub fn default_algorithm() -> TotpAlgorithm []
+    todo("totp-nv.totpalg.default_algorithm")
+
+// How many bytes the HMAC under this algorithm produces: 20, 32 or
+// 64.
+//
+// The same numbers as crypto-nv's `hashing.SHA1_DIGEST_BYTES`,
+// `SHA256_DIGEST_BYTES` and `SHA512_DIGEST_BYTES`, which is where
+// the digest itself comes from.  A caller sizing the buffer an HMAC
+// is written into asks this.
+//
+// ```novo
+// use totpalg
+//
+// fn main() [io]
+//     println("${totpalg.digest_bytes(TotpAlgSha1)}")     // 20
+//     println("${totpalg.digest_bytes(TotpAlgSha512)}")   // 64
+// ```
+pub fn digest_bytes(a: TotpAlgorithm) -> Int []
+    todo("totp-nv.totpalg.digest_bytes")
+
+// How many bytes the hash's compression function takes at a time: 64,
+// 64 or 128.
+//
+// It is published because it decides what a key longer than a block
+// means — HMAC hashes such a key down to a digest first, RFC 2104
+// § 2 — and because RFC 6238's test vectors are stated in terms of
+// it: the SHA-256 and SHA-512 seeds there are the twenty ASCII bytes
+// repeated to the BLOCK size, 32 and 64, and a reader who uses the
+// twenty-byte seed for all three gets three wrong tables.
+//
+// ```novo
+// use totpalg
+//
+// fn main() [io]
+//     println("${totpalg.block_bytes(TotpAlgSha256)}")   // 64
+//     println("${totpalg.block_bytes(TotpAlgSha512)}")   // 128
+// ```
+pub fn block_bytes(a: TotpAlgorithm) -> Int []
+    todo("totp-nv.totpalg.block_bytes")
+
+// The algorithm's name as the `otpauth://` URI writes it: `"SHA1"`,
+// `"SHA256"` or `"SHA512"`.
+//
+// No hyphen.  The Key Uri Format writes `SHA1` where the RFC writes
+// SHA-1, and an authenticator reading `SHA-1` from the parameter does
+// not recognise it.
+//
+// ```novo
+// use totpalg
+//
+// fn main() [io]
+//     println(totpalg.alg_name(TotpAlgSha256))   // SHA256
+// ```
+pub fn alg_name(a: TotpAlgorithm) -> Str []
+    todo("totp-nv.totpalg.alg_name")
+
+// The algorithm that name denotes, or the refusal.
+//
+// Case-insensitive, and a hyphen is accepted where the URI format
+// writes none, so `"SHA1"`, `"sha1"` and `"SHA-1"` all answer
+// `TotpAlgSha1`.  Anything else is `TotpUriUnknownAlgorithm` carrying
+// the text as it was written, so a log shows what arrived.
+//
+// ```novo
+// use totpalg
+// use totperr
+//
+// fn main() [io]
+//     match totpalg.alg_named("sha256")
+//         Ok(a)  => println(totpalg.alg_name(a))    // SHA256
+//         Err(e) => println(totperr.code(e))
+// ```
+pub fn alg_named(name: Str) -> Result<TotpAlgorithm, TotpError> []
+    todo("totp-nv.totpalg.alg_named")
