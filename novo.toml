@@ -1,6 +1,6 @@
 [package]
 name        = "totp-nv"
-version     = "0.0.1"
+version     = "0.0.2"
 description = "HOTP (RFC 4226) and TOTP (RFC 6238) over crypto-nv's HMAC, with the counter or the Unix time supplied by the caller: a one-time password is a zero-padded STRING, the verification window is a value, verification answers WHICH step matched so a server can refuse a replay, and the otpauth:// URI parses and formats over url-nv.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 

@@ -4,12 +4,12 @@
 source = "registry"
 url = "https://registry.novo-lang.org"
 req = "^0.1"
-version = "0.1.3"
-hash = "b0bf3b342541097171db05e4fb7e0000b023bee24040eb5476398beeb9176d35"
+version = "0.1.6"
+hash = "ca4cad680d78976cdd161a97607b3a3f3f9c9ee9f97bda6584570475f5da499f"
 
 [url-nv]
 source = "registry"
 url = "https://registry.novo-lang.org"
 req = "^0.1"
-version = "0.1.1"
-hash = "89b4b90f7176b93acb4f2dc0874d5853afb99bf26db73120cc9f63069cffef5f"
+version = "0.1.3"
+hash = "3f1a44d95e44f07215452c9fdb72dbb482ede3aea806af5268b1edd547eefa42"

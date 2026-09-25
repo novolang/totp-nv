@@ -5,6 +5,16 @@ All notable changes to totp-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## 0.0.2 — 2026-09-25
+
+The package builds with novo 0.11.  Every body is still `todo()`.
+
+- The lock file moves crypto-nv 0.1.3 to 0.1.6 and url-nv 0.1.1 to
+  0.1.3.  crypto-nv 0.1.3 and url-nv 0.1.1 write into lists through
+  names that are not declared `var`, which novo 0.11 refuses (E2038), so
+  this package did not build with novo 0.11 against them.  No
+  requirement in the manifest changed.
+
 ## [0.0.1] — 2026-09-17
 
 **The interface, published before anyone implements it.** Every public
