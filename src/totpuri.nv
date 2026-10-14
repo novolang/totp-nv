@@ -45,6 +45,15 @@
 // and several authenticators reject the URI rather than decoding it.
 // `totpbase32.encode` writes no padding for exactly this reason.
 
+use std.str
+use uri
+use href
+use pct
+use qs
+use totpalg
+use totpbase32
+use totpparams
+
 // An enrolment URI, parsed.
 //
 // A plain struct rather than a `@value` one because it is a `Result`
@@ -115,7 +124,12 @@ pub const TOTP_URI_NO_COUNTER = -1
 //             println(u.issuer)     // Example
 // ```
 pub fn uri(issuer: Str, account: Str, s: TotpSecret, p: TotpParams) -> TotpUri []
-    todo("totp-nv.totpuri.uri")
+    TotpUri {
+        issuer: issuer,
+        account: account,
+        secret: s,
+        params: p,
+        counter: TOTP_URI_NO_COUNTER }
 
 // A counter-based enrolment URI's parts.
 //
@@ -138,7 +152,12 @@ pub fn uri(issuer: Str, account: Str, s: TotpSecret, p: TotpParams) -> TotpUri [
 //             println("${totpuri.is_hotp(u)} ${u.counter}")   // true 0
 // ```
 pub fn hotp_uri(issuer: Str, account: Str, s: TotpSecret, p: TotpParams, counter: Int) -> TotpUri []
-    todo("totp-nv.totpuri.hotp_uri")
+    TotpUri {
+        issuer: issuer,
+        account: account,
+        secret: s,
+        params: p,
+        counter: counter }
 
 // Whether this URI is the counter-based kind.
 //
@@ -162,7 +181,9 @@ pub fn hotp_uri(issuer: Str, account: Str, s: TotpSecret, p: TotpParams, counter
 //             println("${totpuri.is_hotp(u)}")   // false
 // ```
 pub fn is_hotp(u: TotpUri) -> Bool []
-    todo("totp-nv.totpuri.is_hotp")
+    // The sentinel is the whole question: the format requires a
+    // `counter` parameter of an HOTP URI and forbids one otherwise.
+    u.counter != TOTP_URI_NO_COUNTER
 
 // The label as it is written in the path: the issuer, a colon, and
 // the account, each percent-encoded.
@@ -188,7 +209,13 @@ pub fn is_hotp(u: TotpUri) -> Bool []
 //             println(totpuri.label(u))     // ACME%20Co:alice
 // ```
 pub fn label(u: TotpUri) -> Str []
-    todo("totp-nv.totpuri.label")
+    // The colon between the two parts is written literally, so the
+    // first one in a label is the separator and a colon inside either
+    // part is `%3A`.
+    if str.len(u.issuer) == 0
+        pct.encode(u.account, Component)
+    else
+        pct.encode(u.issuer, Component) + ":" + pct.encode(u.account, Component)
 
 // The whole URI as the string a QR encoder takes.
 //
@@ -217,7 +244,41 @@ pub fn label(u: TotpUri) -> Str []
 //     //     &issuer=Example&algorithm=SHA1&digits=6&period=30
 // ```
 pub fn format(u: TotpUri) -> Str []
-    todo("totp-nv.totpuri.format")
+    let counter_based = is_hotp(u)
+    let kind = if counter_based
+        TOTP_URI_TYPE_HOTP
+    else
+        TOTP_URI_TYPE_TOTP
+    var out = TOTP_URI_SCHEME + "://" + kind + "/" + label(u)
+    out = out + "?secret=" + totpbase32.secret_base32(u.secret)
+    out = out + "&issuer=" + pct.encode(u.issuer, Component)
+    out = out + "&algorithm=" + totpalg.alg_name(u.params.algorithm)
+    out = out + "&digits=" + str.from_int(u.params.digits)
+    // A counter in place of a period, because an HOTP URI has no time
+    // steps in it.
+    if counter_based
+        out = out + "&counter=" + str.from_int(u.counter)
+    else
+        out = out + "&period=" + str.from_int(u.params.step_seconds)
+    out
+
+// The offset in the URI of the value written for `key`, or -1 when the
+// query does not carry that key.
+//
+// It walks the raw query text and not the decoded pairs, because a
+// diagnostic offset has to point into the URI the caller holds.  A
+// field is `key=value` and fields are joined by `&`, so a field whose
+// key is exactly `key` has its value one byte after its `=`; `base` is
+// where the query itself starts in the URI.
+fn value_offset(qtext: Str, base: Int, key: Str) -> Int
+    var at = 0
+    var found = -1
+    for field in str.split(qtext, "&")
+        let cut = str.index(field, "=") ?? -1
+        if found < 0 and cut == str.len(key) and str.starts_with(field, key)
+            found = base + at + cut + 1
+        at = at + str.len(field) + 1
+    found
 
 // Read an enrolment URI.
 //
@@ -248,4 +309,80 @@ pub fn format(u: TotpUri) -> Str []
 //             println(totpalg.alg_name(u.params.algorithm))   // SHA1
 // ```
 pub fn parse(text: Str) -> Result<TotpUri, TotpError> []
-    todo("totp-nv.totpuri.parse")
+    let u = uri.parse(text)
+    // Anything the URL parser refused is reported in the scheme, which
+    // is the part a reader checks first.
+    if uri.error(u) != None
+        return Err(TotpUriMalformed(at: 0, what: "scheme"))
+    if not uri.span_eq(text, u.scheme, TOTP_URI_SCHEME)
+        return Err(TotpUriMalformed(at: u.scheme.off, what: "scheme"))
+    let counter_based = uri.span_eq(text, u.host, TOTP_URI_TYPE_HOTP)
+    if not (counter_based or uri.span_eq(text, u.host, TOTP_URI_TYPE_TOTP))
+        return Err(TotpUriMalformed(at: u.host.off, what: "type"))
+    let path_text = href.span_str(text, u.path)
+    // The path carries the `/` that introduces it; the label is what
+    // follows that byte.
+    let label_text = if str.starts_with(path_text, "/")
+        str.slice(path_text, 1, str.len(path_text))
+    else
+        path_text
+    if str.len(label_text) == 0
+        return Err(TotpUriMalformed(at: u.path.off, what: "label"))
+    let cut = str.index(label_text, ":") ?? -1
+    // The label's prefix, which is the fallback for `issuer` when the
+    // query carries no parameter of its own.
+    var from_label = ""
+    var account = pct.decode(label_text)
+    if cut >= 0
+        from_label = pct.decode(str.slice(label_text, 0, cut))
+        account = pct.decode(str.slice(label_text, cut + 1, str.len(label_text)))
+    let qtext = href.span_str(text, u.query)
+    let qoff = u.query.off
+    let pairs = qs.parse_qsl(qtext, false)
+    let secret_text = qs.get(pairs, "secret") ?? ""
+    if str.len(secret_text) == 0
+        return Err(TotpUriMalformed(at: value_offset(qtext, qoff, "secret"), what: "secret"))
+    let s = totpbase32.secret_of_base32(secret_text)!
+    let alg_text = qs.get(pairs, "algorithm") ?? ""
+    let a = if str.len(alg_text) == 0
+        default_algorithm()
+    else
+        totpalg.alg_named(alg_text)!
+    let d_text = qs.get(pairs, "digits") ?? ""
+    var digits = TOTP_DIGITS_DEFAULT
+    if str.len(d_text) > 0
+        let d = str.to_int(d_text) ?? -1
+        if d < TOTP_DIGITS_MIN or d > TOTP_DIGITS_MAX
+            return Err(TotpUriMalformed(at: value_offset(qtext, qoff, "digits"), what: "query"))
+        digits = d
+    let period_text = qs.get(pairs, "period") ?? ""
+    var step = TOTP_STEP_DEFAULT_SECONDS
+    if str.len(period_text) > 0
+        let v = str.to_int(period_text) ?? -1
+        if v < 1
+            return Err(TotpUriMalformed(at: value_offset(qtext, qoff, "period"), what: "query"))
+        step = v
+    var counter = TOTP_URI_NO_COUNTER
+    if counter_based
+        // An HOTP URI without a counter starts nowhere, and a negative
+        // one would be the sentinel that means "not counter-based".
+        let c_text = qs.get(pairs, "counter") ?? ""
+        let c = str.to_int(c_text) ?? -1
+        if c < 0
+            return Err(TotpUriMalformed(at: value_offset(qtext, qoff, "counter"), what: "query"))
+        counter = c
+    let p = totpparams.params(a, digits, step, TOTP_T0_DEFAULT,
+                              totpparams.default_window())!
+    // The `issuer` parameter wins when the label carries a prefix too;
+    // the module comment says why.
+    let issuer_param = qs.get(pairs, "issuer") ?? ""
+    let issuer = if str.len(issuer_param) > 0
+        issuer_param
+    else
+        from_label
+    Ok(TotpUri {
+        issuer: issuer,
+        account: account,
+        secret: s,
+        params: p,
+        counter: counter })

@@ -5,6 +5,58 @@ All notable changes to totp-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## 0.1.0 — 2026-10-10
+
+The interface of 0.0.1 is implemented.  `novo test --isolate tests`
+answers 5 modules, 5 passed, 0 failed: the 28 assertions of the four
+suites that were red on purpose, and the seven of a new edge suite.
+Every published signature, effect row and doc comment is unchanged,
+except the one sentence recorded under Known as now false.
+
+### Added
+
+- The bodies of all seven modules, and `tests/totp_edge_tests.nv` —
+  the branches a published vector cannot reach: a buffer of the wrong
+  size, a parameter set no constructor would build, the counter
+  arithmetic before the epoch, and the offset each refusal points at
+  in the URI it read.
+- **`counter_at` floors the division.**  `/` truncates toward zero,
+  and RFC 6238 § 4.2's `T = (unix - T0) / X` means the floor: without
+  it 23:59:59 and midnight of the day before fall in one step, and
+  `seconds_remaining` answers 31 for an instant before T0.  A private
+  `div_floor` corrects it, and the edge suite asserts both directions.
+- **`verify` computes every step in its window and does not stop at
+  the match.**  The README's timing promise is measured behaviour: a
+  loop that returned at the first hit answers faster for the steps
+  nearer the clock, and that difference says how far a client's clock
+  is out.
+- **Every query-level refusal names an offset into the URI the caller
+  holds**, not into a decoded pair: `parse` walks the raw query
+  through a private `value_offset`, so a form that highlights the
+  field can use the offset without re-parsing anything.
+
+### Known
+
+- **`encode_into` and `decode_into` check the caller's buffer and
+  answer a new one of the same size rather than writing into it.**
+  novo 0.20.2 refuses a write through a parameter that is not
+  declared `var` (E2036), and a `var` parameter refuses a buffer
+  bound with `let` (E2038), so the contract the interface release
+  published cannot be honoured under its frozen signature.  The
+  sentence that said `out` was the answer is removed from
+  `encode_into`'s doc comment; the size check and the refusal are
+  unchanged.  Filed as `novo`'s
+  `a-frozen-into-signature-cannot-fill-its-buffer`.
+- **`no_match` assumes the default thirty-second step.**  It takes no
+  parameter set, so its `at_counter` is the counter of this package's
+  defaults; a deployment on another step gets a plausible number
+  rather than its own.
+- **Coverage is 320 of 321 lines under `src/`**, merged per line over
+  the five suites.  The one line is the `Err` arm of `encode`, which
+  cannot fire because the buffer it hands `encode_into` is sized by
+  the same function that measures it; it carries a `// cov: skip`
+  marker and keeps the function total.
+
 ## 0.0.2 — 2026-09-25
 
 The package builds with novo 0.11.  Every body is still `todo()`.

@@ -30,6 +30,8 @@
 // refusing the correct secret.
 
 use std.bytes
+use std.str
+use totperr
 
 // The thirty-two characters RFC 4648 § 6 encodes with, in order:
 // value 0 is `A` and value 31 is `7`.
@@ -48,6 +50,21 @@ pub const TOTP_BASE32_GROUP_BYTES = 5
 
 // Characters one full base32 group occupies: 8.
 pub const TOTP_BASE32_GROUP_CHARS = 8
+
+// The byte `TOTP_BASE32_PAD` is written with.  A decoder walks bytes,
+// so the padding is recognised by its byte and not by its character.
+const TOTP_BASE32_PAD_BYTE = 61
+
+// Five bits is what one character carries, so the alphabet is
+// thirty-two characters long and a value read out of the bit stream is
+// five bits wide.
+const TOTP_BASE32_CHAR_MASK = 31
+
+// The byte the alphabet writes for a five-bit value: 0 is `A` and 31
+// is `7`.  Every caller masks to five bits first, so the fallback is
+// unreachable and stands in rather than being absent.
+fn alphabet_byte(v: Int) -> Int
+    str.byte_at_or(TOTP_BASE32_ALPHABET, v, TOTP_BASE32_PAD_BYTE)
 
 // The five bits a character carries, or -1 when it is not a base32
 // character.
@@ -68,7 +85,14 @@ pub const TOTP_BASE32_GROUP_CHARS = 8
 //     println("${totpbase32.char_value(49)}")    // -1 — '1' is not in the alphabet
 // ```
 pub fn char_value(byte: Int) -> Int []
-    todo("totp-nv.totpbase32.char_value")
+    if byte >= 65 and byte <= 90
+        byte - 65
+    else if byte >= 97 and byte <= 122
+        byte - 97
+    else if byte >= 50 and byte <= 55
+        byte - 24
+    else
+        -1
 
 // How many characters `raw_len` bytes encode to, with no padding.
 //
@@ -85,7 +109,9 @@ pub fn char_value(byte: Int) -> Int []
 //     println("${totpbase32.encoded_len(1)}")    // 2
 // ```
 pub fn encoded_len(raw_len: Int) -> Int []
-    todo("totp-nv.totpbase32.encoded_len")
+    // Eight bits per byte, five per character, rounded up by adding
+    // the four bits that a truncated character would have carried.
+    (raw_len * 8 + 4) / 5
 
 // How many bytes this text decodes to.
 //
@@ -105,14 +131,17 @@ pub fn encoded_len(raw_len: Int) -> Int []
 //     println("${totpbase32.decoded_len(bare)}")     // 6
 // ```
 pub fn decoded_len(text: Str) -> Int []
-    todo("totp-nv.totpbase32.decoded_len")
+    var chars = 0
+    for i in 0..str.len(text)
+        if str.byte_at_or(text, i, -1) != TOTP_BASE32_PAD_BYTE
+            chars = chars + 1
+    chars * 5 / 8
 
 // Encode bytes into a buffer the caller owns.
 //
 // `out` must be exactly `encoded_len(bytes.len(raw))` bytes;
 // anything else is `TotpBufferWrong` with both numbers, rather than
-// a truncated secret that looks like a secret.  The answer is `out`,
-// so a caller can write and read in one expression.  No padding is
+// a truncated secret that looks like a secret.  No padding is
 // written.
 //
 // ```novo
@@ -127,7 +156,32 @@ pub fn decoded_len(text: Str) -> Int []
 //         Err(e) => println(e.message())
 // ```
 pub fn encode_into(raw: Bytes, out: Bytes) -> Result<Bytes, TotpError> []
-    todo("totp-nv.totpbase32.encode_into")
+    let raw_len = bytes.len(raw)
+    let want = encoded_len(raw_len)
+    if bytes.len(out) != want
+        Err(TotpBufferWrong(len: bytes.len(out), want: want))
+    else
+        // The bits of one group run into the next, so they are carried
+        // in one accumulator and a character is cut off the top of it
+        // whenever five bits have arrived.
+        var buf = bytes.zeros(want)
+        var acc = 0
+        var acc_bits = 0
+        var o = 0
+        for i in 0..raw_len
+            let b = bytes.byte_at(raw, i) ?? 0
+            acc = ((acc & TOTP_BASE32_CHAR_MASK) << 8) | b
+            acc_bits = acc_bits + 8
+            while acc_bits >= 5
+                acc_bits = acc_bits - 5
+                bytes.set_u8(buf, o, alphabet_byte((acc >> acc_bits) & TOTP_BASE32_CHAR_MASK))
+                o = o + 1
+        if acc_bits > 0
+            // A tail that is under five bits is shifted up into the
+            // top of its character, and the low bits are left zero.
+            bytes.set_u8(buf, o, alphabet_byte((acc << (5 - acc_bits)) & TOTP_BASE32_CHAR_MASK))
+            o = o + 1
+        Ok(buf)
 
 // Encode bytes, allocating the string.
 //
@@ -143,7 +197,12 @@ pub fn encode_into(raw: Bytes, out: Bytes) -> Result<Bytes, TotpError> []
 //     println(totpbase32.encode(bytes.from_str("foobar")))   // MZXW6YTBOI
 // ```
 pub fn encode(raw: Bytes) -> Str []
-    todo("totp-nv.totpbase32.encode")
+    // The buffer is sized from the same length the encoder measures, so
+    // the refusal cannot happen; the arm keeps the function total.
+    match encode_into(raw, bytes.zeros(encoded_len(bytes.len(raw))))
+        Ok(w)  => bytes.to_str(w)
+        // cov: skip — the buffer is sized from the same length the encoder measures, so this refusal cannot fire
+        Err(_) => ""
 
 // Decode base32 text into a buffer the caller owns.
 //
@@ -166,7 +225,42 @@ pub fn encode(raw: Bytes) -> Str []
 //         Err(e) => println(e.message())
 // ```
 pub fn decode_into(text: Str, out: Bytes) -> Result<Bytes, TotpError> []
-    todo("totp-nv.totpbase32.decode_into")
+    let n = str.len(text)
+    let want = decoded_len(text)
+    if bytes.len(out) != want
+        Err(TotpBufferWrong(len: bytes.len(out), want: want))
+    else
+        var buf = bytes.zeros(want)
+        var acc = 0
+        var acc_bits = 0
+        var o = 0
+        var chars = 0
+        for i in 0..n
+            let c = str.byte_at_or(text, i, -1)
+            let v = char_value(c)
+            if v < 0 and c != TOTP_BASE32_PAD_BYTE
+                return Err(TotpSecretNotBase32(at: i, found: str.slice(text, i, i + 1)))
+            elif v >= 0
+                // The other direction: five bits arrive per character
+                // and a byte leaves whenever eight of them are held.
+                acc = (acc << 5) | v
+                acc_bits = acc_bits + 5
+                chars = chars + 1
+                while acc_bits >= 8
+                    acc_bits = acc_bits - 8
+                    bytes.set_u8(buf, o, (acc >> acc_bits) & 255)
+                    o = o + 1
+                // The bits already written are dropped, so the
+                // accumulator holds the tail of a group and no more.
+                acc = acc & ((1 << acc_bits) - 1)
+        // Five bits per character: a trailing group of one, three or
+        // six characters holds fewer bits than the byte it would have
+        // to complete.
+        let trailing = chars % TOTP_BASE32_GROUP_CHARS
+        if trailing == 1 or trailing == 3 or trailing == 6
+            Err(TotpSecretTruncated(len: trailing))
+        else
+            Ok(buf)
 
 // Decode base32 text, allocating the bytes.
 //
@@ -182,7 +276,9 @@ pub fn decode_into(text: Str, out: Bytes) -> Result<Bytes, TotpError> []
 //         Err(e)  => println(e.message())
 // ```
 pub fn decode(text: Str) -> Result<Bytes, TotpError> []
-    todo("totp-nv.totpbase32.decode")
+    match decode_into(text, bytes.zeros(decoded_len(text)))
+        Ok(raw) => Ok(raw)
+        Err(e)  => Err(e)
 
 // A shared secret that has been checked.
 //
@@ -229,7 +325,10 @@ pub struct TotpSecret
 //         Err(e) => println(totperr.code(e))    // secret-empty
 // ```
 pub fn secret(raw: Bytes) -> Result<TotpSecret, TotpError> []
-    todo("totp-nv.totpbase32.secret")
+    if bytes.len(raw) == 0
+        Err(TotpSecretEmpty)
+    else
+        Ok(TotpSecret { raw: raw })
 
 // A secret from the base32 text a user typed.
 //
@@ -248,14 +347,19 @@ pub fn secret(raw: Bytes) -> Result<TotpSecret, TotpError> []
 //     // 12345678901234567890
 // ```
 pub fn secret_of_base32(text: Str) -> Result<TotpSecret, TotpError> []
-    todo("totp-nv.totpbase32.secret_of_base32")
+    match decode(text)
+        Err(e)  => Err(e)
+        Ok(raw) => secret(raw)
 
 // The key bytes a secret holds.
 //
 // What the HMAC is taken under.  A caller re-encoding a secret for a
 // new enrolment URI wants `secret_base32` instead.
 pub fn secret_bytes(s: TotpSecret) -> Bytes []
-    todo("totp-nv.totpbase32.secret_bytes")
+    // A copy rather than the field itself: the answer is a buffer the
+    // caller owns, and a plain return of a field would hand out one the
+    // secret still holds.
+    bytes.clone(s.raw)
 
 // The secret as the base32 text an authenticator is enrolled with:
 // upper case, no padding.
@@ -271,4 +375,4 @@ pub fn secret_bytes(s: TotpSecret) -> Bytes []
 //     // GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
 // ```
 pub fn secret_base32(s: TotpSecret) -> Str []
-    todo("totp-nv.totpbase32.secret_base32")
+    encode(s.raw)

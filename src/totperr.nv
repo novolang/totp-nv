@@ -105,7 +105,29 @@ impl Error for TotpError
     //     // totp: 9 digits were asked for and this package writes 6 to 8
     // ```
     fn message(self) -> Str
-        todo("totp-nv.totperr.TotpError.message")
+        match self
+            TotpSecretNotBase32(at, found)              =>
+                "totp: `${found}` at offset ${at} is not in RFC 4648's base32 alphabet"
+            TotpSecretEmpty                             =>
+                "totp: the secret is empty, and an empty HMAC key is one anybody holds"
+            TotpSecretTruncated(len)                    =>
+                "totp: the base32 secret ends in a group of ${len} characters, which carries no whole byte"
+            TotpBufferWrong(len, want)                  =>
+                "totp: the buffer is ${len} bytes and this input needs ${want}"
+            TotpDigitsOutOfRange(digits, lo, hi)        =>
+                "totp: ${digits} digits were asked for and this package writes ${lo} to ${hi}"
+            TotpStepNotPositive(step)                   =>
+                "totp: a step of ${step} seconds has no counter to divide by"
+            TotpWindowNegative(steps_back, steps_ahead) =>
+                "totp: a window of ${steps_back} steps back and ${steps_ahead} forward counts below zero"
+            TotpCodeWrongLength(len, want)              =>
+                "totp: the code is ${len} characters and this one is ${want}"
+            TotpCodeNotDigits(at, found)                =>
+                "totp: `${found}` at offset ${at} is not a decimal digit"
+            TotpUriMalformed(at, what)                  =>
+                "totp: the enrolment URI could not be read at offset ${at}, in the ${what}"
+            TotpUriUnknownAlgorithm(found)              =>
+                "totp: no algorithm named `${found}` is implemented here"
 
 // Whether the refusal is about a stored value somebody has to
 // correct.
@@ -124,7 +146,13 @@ impl Error for TotpError
 //     println("${totperr.is_config_fault(e)}")   // true
 // ```
 pub fn is_config_fault(e: TotpError) -> Bool []
-    todo("totp-nv.totperr.is_config_fault")
+    match e
+        TotpSecretNotBase32(_, _)  => true
+        TotpSecretEmpty            => true
+        TotpSecretTruncated(_)     => true
+        TotpUriMalformed(_, _)     => true
+        TotpUriUnknownAlgorithm(_) => true
+        _                          => false
 
 // Whether the refusal is something the person at the keyboard did.
 //
@@ -140,7 +168,10 @@ pub fn is_config_fault(e: TotpError) -> Bool []
 //     println("${totperr.is_user_fault(e)}")     // true
 // ```
 pub fn is_user_fault(e: TotpError) -> Bool []
-    todo("totp-nv.totperr.is_user_fault")
+    match e
+        TotpCodeWrongLength(_, _) => true
+        TotpCodeNotDigits(_, _)   => true
+        _                         => false
 
 // Whether the refusal is about an argument the calling code chose.
 //
@@ -157,7 +188,12 @@ pub fn is_user_fault(e: TotpError) -> Bool []
 //     println("${totperr.is_program_fault(e)}")  // true
 // ```
 pub fn is_program_fault(e: TotpError) -> Bool []
-    todo("totp-nv.totperr.is_program_fault")
+    match e
+        TotpBufferWrong(_, _)         => true
+        TotpDigitsOutOfRange(_, _, _) => true
+        TotpStepNotPositive(_)        => true
+        TotpWindowNegative(_, _)      => true
+        _                             => false
 
 // Where in a piece of text the refusal was found, or -1 when the
 // refusal is not about a position in text.
@@ -175,7 +211,11 @@ pub fn is_program_fault(e: TotpError) -> Bool []
 //     println("${totperr.offset(TotpSecretEmpty)}")  // -1
 // ```
 pub fn offset(e: TotpError) -> Int []
-    todo("totp-nv.totperr.offset")
+    match e
+        TotpSecretNotBase32(at, _) => at
+        TotpCodeNotDigits(at, _)   => at
+        TotpUriMalformed(at, _)    => at
+        _                          => -1
 
 // The refusal as a short stable token, for a log that is grepped
 // rather than read: `"secret-not-base32"`, `"secret-empty"`,
@@ -190,4 +230,15 @@ pub fn offset(e: TotpError) -> Int []
 //     println(totperr.code(TotpSecretEmpty))   // secret-empty
 // ```
 pub fn code(e: TotpError) -> Str []
-    todo("totp-nv.totperr.code")
+    match e
+        TotpSecretNotBase32(_, _)     => "secret-not-base32"
+        TotpSecretEmpty               => "secret-empty"
+        TotpSecretTruncated(_)        => "secret-truncated"
+        TotpBufferWrong(_, _)         => "buffer-wrong"
+        TotpDigitsOutOfRange(_, _, _) => "digits-out-of-range"
+        TotpStepNotPositive(_)        => "step-not-positive"
+        TotpWindowNegative(_, _)      => "window-negative"
+        TotpCodeWrongLength(_, _)     => "code-wrong-length"
+        TotpCodeNotDigits(_, _)       => "code-not-digits"
+        TotpUriMalformed(_, _)        => "uri-malformed"
+        TotpUriUnknownAlgorithm(_)    => "uri-unknown-algorithm"

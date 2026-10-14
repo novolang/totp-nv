@@ -34,6 +34,12 @@
 // as bytes.
 
 use std.bytes
+use std.str
+use digest
+use hashing
+use totpalg
+use totpbase32
+use totpparams
 
 // The mask RFC 4226 § 5.3 applies to the first truncated byte:
 // 0x7FFFFFFF over the four bytes, which is the same as clearing the
@@ -45,6 +51,35 @@ pub const TOTP_TRUNCATION_MASK = 2147483647
 // Bytes the counter occupies in the HMAC message: 8, big-endian,
 // RFC 4226 § 5.1.
 pub const TOTP_COUNTER_BYTES = 8
+
+// The mask the dynamic truncation's offset is read with: the low four
+// bits of the digest's last byte, which is 15 — RFC 4226 § 5.3's
+// `Offset = DT[19] & 0xf`.  Fifteen is the largest offset at which
+// four bytes still follow inside a 20-byte SHA-1 digest, which is why
+// `dynamic_truncate` refuses anything shorter.
+const TOTP_TRUNCATION_OFFSET_MASK = 15
+
+// Ten to the power of `digits`, by multiplication rather than by a
+// table: the digit count is 6 to 8, and a table of three numbers would
+// be a second place the range lives.
+fn ten_to_the(digits: Int) -> Int
+    var m = 1
+    for _ in 0..digits
+        m = m * 10
+    m
+
+// The offset of the first character in `code` that is not a decimal
+// digit, or -1 when every character is one.
+//
+// A byte comparison is the whole test, because a code is ASCII by
+// definition.  The first hit is the one that is named, and the scan
+// stops there.
+fn first_non_digit(code: Str) -> Int
+    for i in 0..str.len(code)
+        let b = str.byte_at_or(code, i, -1)
+        if b < 48 or b > 57
+            return i
+    -1
 
 // The counter as the eight bytes the HMAC is taken over.
 //
@@ -63,7 +98,7 @@ pub const TOTP_COUNTER_BYTES = 8
 //     // 0000000000000001
 // ```
 pub fn counter_bytes(counter: Int) -> Bytes []
-    todo("totp-nv.totphotp.counter_bytes")
+    bytes.u64_be(counter)
 
 // The HMAC of the counter under the secret: the intermediate value
 // RFC 4226 Appendix D prints.
@@ -90,7 +125,16 @@ pub fn counter_bytes(counter: Int) -> Bytes []
 //             // cc93cf18508d94934c64b65d8ba7667fb7cde4b0
 // ```
 pub fn hmac_of_counter(s: TotpSecret, counter: Int, p: TotpParams) -> Result<Bytes, TotpError> []
-    todo("totp-nv.totphotp.hmac_of_counter")
+    // The key and the message are each read once, before the match:
+    // the three arms differ only in which hash absorbs them, and the
+    // buffer each is written into is sized by the same hash.
+    let key = totpbase32.secret_bytes(s)
+    let msg = counter_bytes(counter)
+    let a = p.algorithm
+    match a
+        TotpAlgSha1   => Ok(hashing.hmac_sha1(key, msg, bytes.zeros(digest_bytes(a))))
+        TotpAlgSha256 => Ok(hashing.hmac_sha256(key, msg, bytes.zeros(digest_bytes(a))))
+        TotpAlgSha512 => Ok(hashing.hmac_sha512(key, msg, bytes.zeros(digest_bytes(a))))
 
 // The dynamic truncation of RFC 4226 § 5.3: a 31-bit number read out
 // of the digest.
@@ -118,7 +162,18 @@ pub fn hmac_of_counter(s: TotpSecret, counter: Int, p: TotpParams) -> Result<Byt
 //                 Err(e) => println(e.message())
 // ```
 pub fn dynamic_truncate(digest: Bytes) -> Result<Int, TotpError> []
-    todo("totp-nv.totphotp.dynamic_truncate")
+    let n = bytes.len(digest)
+    if n < 20
+        Err(TotpBufferWrong(len: n, want: 20))
+    else
+        // The last byte's low four bits are the offset, and the four
+        // bytes there are read big-endian.  Both readers are total
+        // for a 20-byte digest — the offset is at most 15, and
+        // 15 + 4 is 19 — so the `?? 0` cannot be taken.
+        let last = bytes.byte_at(digest, n - 1) ?? 0
+        let offset = last & TOTP_TRUNCATION_OFFSET_MASK
+        let v = bytes.u32_be_at(digest, offset) ?? 0
+        Ok(v & TOTP_TRUNCATION_MASK)
 
 // The truncated value as the code a user reads: `value` modulo
 // `10^digits`, written with leading zeros to exactly `digits`
@@ -138,7 +193,13 @@ pub fn dynamic_truncate(digest: Bytes) -> Result<Int, TotpError> []
 //         Err(e) => println(e.message())
 // ```
 pub fn code_of_truncated(value: Int, digits: Int) -> Result<Str, TotpError> []
-    todo("totp-nv.totphotp.code_of_truncated")
+    if digits < TOTP_DIGITS_MIN or digits > TOTP_DIGITS_MAX
+        Err(TotpDigitsOutOfRange(digits: digits, lo: TOTP_DIGITS_MIN, hi: TOTP_DIGITS_MAX))
+    else
+        // The digits are cut off the top here, and `pad_left` puts the
+        // zeros back, so a code that begins with one keeps it.
+        let m = ten_to_the(digits)
+        Ok(str.pad_left(str.from_int(value % m), digits, "0"))
 
 // The HOTP code for this secret and this counter.
 //
@@ -161,7 +222,13 @@ pub fn code_of_truncated(value: Int, digits: Int) -> Result<Str, TotpError> []
 //                 Err(e) => println(e.message())
 // ```
 pub fn hotp(s: TotpSecret, counter: Int, p: TotpParams) -> Result<Str, TotpError> []
-    todo("totp-nv.totphotp.hotp")
+    // Neither step can refuse for the digest this package's own
+    // handshake produces, so `!` carries the error path rather than a
+    // second match with an arm no input can reach.  The digit count is
+    // the one check that can fire here, and it is the last call.
+    let d = hmac_of_counter(s, counter, p)!
+    let v = dynamic_truncate(d)!
+    code_of_truncated(v, p.digits)
 
 // Whether a submitted code is the one this counter produces.
 //
@@ -196,7 +263,16 @@ pub fn hotp(s: TotpSecret, counter: Int, p: TotpParams) -> Result<Str, TotpError
 // ```
 pub fn verify_at(s: TotpSecret, counter: Int, code: Str,
                  p: TotpParams) -> Result<Bool, TotpError> []
-    todo("totp-nv.totphotp.verify_at")
+    // The shape is checked before the HMAC, so a five-character
+    // submission costs a length read and not a hash.  The comparison
+    // is `ct_eq` and not `==`; the doc comment above says why.
+    match check_code(code, p)
+        Some(e) => Err(e)
+        None    =>
+            match hotp(s, counter, p)
+                Err(e)       => Err(e)
+                Ok(expected) =>
+                    Ok(digest.ct_eq(bytes.from_str(code), bytes.from_str(expected)))
 
 // Whether a submitted code is even the right shape, and why not.
 //
@@ -219,4 +295,12 @@ pub fn verify_at(s: TotpSecret, counter: Int, code: Str,
 //         None    => println("well formed")
 // ```
 pub fn check_code(code: Str, p: TotpParams) -> ?TotpError []
-    todo("totp-nv.totphotp.check_code")
+    let n = str.len(code)
+    if n != p.digits
+        Some(TotpCodeWrongLength(len: n, want: p.digits))
+    else
+        let at = first_non_digit(code)
+        if at < 0
+            None
+        else
+            Some(TotpCodeNotDigits(at: at, found: str.slice(code, at, at + 1)))

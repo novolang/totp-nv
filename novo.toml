@@ -1,15 +1,10 @@
 [package]
 name        = "totp-nv"
-version     = "0.0.2"
-description = "HOTP (RFC 4226) and TOTP (RFC 6238) over crypto-nv's HMAC, with the counter or the Unix time supplied by the caller: a one-time password is a zero-padded STRING, the verification window is a value, verification answers WHICH step matched so a server can refuse a replay, and the otpauth:// URI parses and formats over url-nv.  Interface only — every body is a todo()."
+version     = "0.1.0"
+description = "HOTP (RFC 4226) and TOTP (RFC 6238) over crypto-nv's HMAC, with the counter or the Unix time supplied by the caller: a one-time password is a zero-padded STRING, the verification window is a value, verification answers WHICH step matched so a server can refuse a replay, and the otpauth:// URI parses and formats over url-nv."
 license     = "Apache-2.0"
 
-# An INTERFACE release: every `pub fn` body is a `todo()`, so the
-# signatures and the effect rows are published and nothing is
-# implemented.  `novo pkg publish` recognises the shape and requires
-# both the draft stability and the 0.0.x version; the first
-# implementation is the 0.1.0 published over it.
-stability   = "draft"
+stability   = "experimental"
 
 # `core`.  A time-based one-time password needs the current time, and
 # a `core` package may not read a clock — so the instant arrives as a
@@ -31,7 +26,7 @@ category    = "crypto"
 tags = ["totp", "hotp", "otp", "one-time-password", "two-factor", "2fa", "mfa", "authenticator", "rfc-4226", "rfc-6238", "base32", "otpauth"]
 repository  = "https://github.com/novolang/totp-nv"
 maintainers = ["novo-lang"]
-novo        = ">= 0.9.0"
+novo        = ">= 0.20.2"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.

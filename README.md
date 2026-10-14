@@ -9,12 +9,6 @@ defines TOTP, which is the same function with the count taken from a
 clock. This package brings both to novo-lang, over
 [crypto-nv](https://novo-lang.org/packages/crypto-nv)'s HMAC.
 
-**Status: NOT IMPLEMENTED — interface only.** Every function is
-declared with its full signature, but every body is a `todo()` that
-panics when called. The package is published so its design can be
-reviewed and depended on before it is implemented. Version 0.1.0 will
-be the first working release.
-
 ## What a one-time password is
 
 A **shared secret** is a string of random bytes that a server and a
@@ -118,10 +112,7 @@ fn main() [io]
                 Err(e) => println(e.message())
 ```
 
-Build and test with `novo pkg build` and `novo test`. Today `novo test`
-fails on purpose: every test reaches a `not implemented:
-totp-nv.<module>.<fn>` panic. The tests are the specification the
-implementation will have to satisfy.
+Build and test with `novo pkg build` and `novo test`.
 
 ## What the package contains
 
@@ -321,6 +312,7 @@ novo test tests/totp_rfc4226_tests.nv    # HOTP, and its three stages
 novo test tests/totp_rfc6238_tests.nv    # TOTP, the window and the replay rule
 novo test tests/totp_base32_tests.nv     # RFC 4648, case and padding
 novo test tests/totp_cover_tests.nv      # the algorithms, the URI, the refusals
+novo test tests/totp_edge_tests.nv       # the branches a vector cannot reach
 ```
 
 The suite carries all thirty of Appendix D's published values, all
@@ -333,33 +325,10 @@ at or below a stored counter is a replay, that a bad base32 character
 is named with its offset, and that an enrolment URI round-trips through
 a label containing a space and a colon.
 
-The tests compile today and fail at run, each on the `not implemented:
-totp-nv.<module>.<fn>` panic that is its body. That is the expected
-state of an interface release. They turn green one at a time as bodies
-land.
-
-## Implementation status
-
-| Item | Implemented |
-| --- | --- |
-| `totpbase32.TOTP_BASE32_ALPHABET`, `.TOTP_BASE32_PAD` and the two group constants | yes (they are constants) |
-| `totpparams.TOTP_DIGITS_DEFAULT`, `.TOTP_DIGITS_MIN`, `.TOTP_DIGITS_MAX`, `.TOTP_STEP_DEFAULT_SECONDS`, `.TOTP_T0_DEFAULT` | yes (they are constants) |
-| `totphotp.TOTP_TRUNCATION_MASK`, `.TOTP_COUNTER_BYTES` | yes (they are constants) |
-| `totpuri.TOTP_URI_SCHEME`, `.TOTP_URI_TYPE_TOTP`, `.TOTP_URI_TYPE_HOTP`, `.TOTP_URI_NO_COUNTER` | yes (they are constants) |
-| `totperr.TotpError`, `totpalg.TotpAlgorithm`, `totpbase32.TotpSecret`, `totpparams.TotpParams`, `.TotpWindow`, `totptime.TotpInstant`, `.TotpMatch`, `totpuri.TotpUri` | the types are declared |
-| `totperr.is_config_fault`, `.is_user_fault`, `.is_program_fault`, `.offset`, `.code`, `TotpError.message` | no |
-| `totpbase32.char_value`, `.encoded_len`, `.decoded_len` | no |
-| `totpbase32.encode_into`, `.encode`, `.decode_into`, `.decode` | no |
-| `totpbase32.secret`, `.secret_of_base32`, `.secret_bytes`, `.secret_base32` | no |
-| `totpalg.default_algorithm`, `.digest_bytes`, `.block_bytes`, `.alg_name`, `.alg_named` | no |
-| `totpparams.window`, `.default_window`, `.exact_window`, `.window_steps` | no |
-| `totpparams.default_params`, `.params`, `.check` | no |
-| `totpparams.with_algorithm`, `.with_digits`, `.with_step`, `.with_t0`, `.with_window` | no |
-| `totphotp.counter_bytes`, `.hmac_of_counter`, `.dynamic_truncate`, `.code_of_truncated` | no |
-| `totphotp.hotp`, `.verify_at`, `.check_code` | no |
-| `totptime.instant`, `.unix_seconds`, `.plus`, `.counter_at`, `.step_start`, `.seconds_remaining` | no |
-| `totptime.totp`, `.verify`, `.no_match`, `.is_replay` | no |
-| `totpuri.uri`, `.hotp_uri`, `.is_hotp`, `.label`, `.format`, `.parse` | no |
+The edge suite carries the branches a vector cannot reach: a buffer
+that is not the size the caller declared, a parameter set no
+constructor would build, the counter arithmetic before the epoch, and
+the offset each refusal points at in the URI it read.
 
 ## Licence
 

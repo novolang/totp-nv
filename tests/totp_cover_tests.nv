@@ -1,9 +1,6 @@
 // tests/totp_cover_tests.nv — the algorithms, the enrolment URI, and
 // the refusals as a set.
 //
-// RED ON PURPOSE, like every suite here: each assertion reaches `not
-// implemented: totp-nv.<module>.<fn>`.
-//
 // The three suites beside this one assert the published vectors.  This
 // one exists so that no public function ships without a written
 // expectation of what it answers, and so that the two places the

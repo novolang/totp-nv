@@ -28,6 +28,9 @@
 // second step.  The other two are here because a protocol may name
 // them and because RFC 6238's own test vectors cover all three.
 
+use std.str
+use totperr
+
 // Which hash the HMAC is taken under.
 //
 // The three RFC 6238 § 1.2 admits, and no arm meaning "whatever the
@@ -64,7 +67,7 @@ pub enum TotpAlgorithm
 //     println(totpalg.alg_name(totpalg.default_algorithm()))   // SHA1
 // ```
 pub fn default_algorithm() -> TotpAlgorithm []
-    todo("totp-nv.totpalg.default_algorithm")
+    TotpAlgSha1
 
 // How many bytes the HMAC under this algorithm produces: 20, 32 or
 // 64.
@@ -82,7 +85,10 @@ pub fn default_algorithm() -> TotpAlgorithm []
 //     println("${totpalg.digest_bytes(TotpAlgSha512)}")   // 64
 // ```
 pub fn digest_bytes(a: TotpAlgorithm) -> Int []
-    todo("totp-nv.totpalg.digest_bytes")
+    match a
+        TotpAlgSha1   => 20
+        TotpAlgSha256 => 32
+        TotpAlgSha512 => 64
 
 // How many bytes the hash's compression function takes at a time: 64,
 // 64 or 128.
@@ -102,7 +108,10 @@ pub fn digest_bytes(a: TotpAlgorithm) -> Int []
 //     println("${totpalg.block_bytes(TotpAlgSha512)}")   // 128
 // ```
 pub fn block_bytes(a: TotpAlgorithm) -> Int []
-    todo("totp-nv.totpalg.block_bytes")
+    match a
+        TotpAlgSha1   => 64
+        TotpAlgSha256 => 64
+        TotpAlgSha512 => 128
 
 // The algorithm's name as the `otpauth://` URI writes it: `"SHA1"`,
 // `"SHA256"` or `"SHA512"`.
@@ -118,7 +127,10 @@ pub fn block_bytes(a: TotpAlgorithm) -> Int []
 //     println(totpalg.alg_name(TotpAlgSha256))   // SHA256
 // ```
 pub fn alg_name(a: TotpAlgorithm) -> Str []
-    todo("totp-nv.totpalg.alg_name")
+    match a
+        TotpAlgSha1   => "SHA1"
+        TotpAlgSha256 => "SHA256"
+        TotpAlgSha512 => "SHA512"
 
 // The algorithm that name denotes, or the refusal.
 //
@@ -137,4 +149,14 @@ pub fn alg_name(a: TotpAlgorithm) -> Str []
 //         Err(e) => println(totperr.code(e))
 // ```
 pub fn alg_named(name: Str) -> Result<TotpAlgorithm, TotpError> []
-    todo("totp-nv.totpalg.alg_named")
+    // Upper case and without the hyphen, so the RFC's spelling and the
+    // URI format's are one comparison each rather than two.
+    let bare = str.replace(str.upper(name), "-", "")
+    if bare == "SHA1"
+        Ok(TotpAlgSha1)
+    else if bare == "SHA256"
+        Ok(TotpAlgSha256)
+    else if bare == "SHA512"
+        Ok(TotpAlgSha512)
+    else
+        Err(TotpUriUnknownAlgorithm(found: name))

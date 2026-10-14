@@ -2,9 +2,6 @@
 // the three decisions that shape the package: the time is a parameter,
 // the window is a value, and verification answers which step matched.
 //
-// They COMPILE today and they FAIL at run, on the `not implemented:
-// totp-nv.<module>.<fn>` panic that is each body.
-//
 // WHERE THE VECTORS COME FROM.  RFC 6238 Appendix B prints eight-digit
 // TOTP values at six instants for all three algorithms.
 //

@@ -1,0 +1,295 @@
+// tests/totp_edge_tests.nv — the branches a published vector cannot
+// reach.
+//
+// The four suites beside this one assert RFC 4226's and RFC 6238's
+// vectors and the documented behaviour.  A vector never hands a
+// function a buffer of the wrong size, never builds a parameter set no
+// constructor would, never verifies before the epoch, and never has to
+// say WHERE in an enrolment URI it stopped reading.  This suite is for
+// those: each refusal arm and each offset assertion below is the one
+// the other three suites leave to the reader.
+//
+// The seeds are the published ones of RFC 6238's test vectors, the
+// same twenty ASCII bytes every suite here uses, and the URI text is
+// built from them at run time rather than transcribed.
+
+use std.test
+use std.bytes
+use std.str
+use totpbase32
+use totperr
+use totphotp
+use totpparams
+use totptime
+use totpuri
+
+// The twenty-byte seed every suite here uses.
+fn a_secret() -> TotpSecret
+    match totpbase32.secret(bytes.from_str("12345678901234567890"))
+        Ok(s)  => s
+        Err(_) => TotpSecret { raw: bytes.zeros(0) }
+
+// The `secret` query parameter for that seed: 32 base32 characters.
+fn secret_param() -> Str
+    "secret=" + totpbase32.secret_base32(a_secret())
+
+// A time-based enrolment URI over `alice` with the seed and `tail`
+// appended, so that a refusal's offset can be stated as a number.
+fn totp_uri_with(tail: Str) -> Result<TotpUri, TotpError>
+    totpuri.parse("otpauth://totp/alice?" + secret_param() + tail)
+
+// The same, counter-based.
+fn hotp_uri_with(tail: Str) -> Result<TotpUri, TotpError>
+    totpuri.parse("otpauth://hotp/alice?" + secret_param() + tail)
+
+@test
+fn test_the_decoders_two_refusals_no_vector_takes() [io]
+    test.case("a buffer that is not decoded_len is refused with both numbers")
+    match totpbase32.decode_into("MZXW6YTBOI", bytes.zeros(3))
+        Ok(_)  => test.fail("three bytes is not the six this text carries")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "buffer-wrong")
+            test.assert_eq(totperr.offset(e), -1)
+
+    test.case("a trailing group of one character carries no whole byte")
+    match totpbase32.decode_into("MZXW6YTBO", bytes.zeros(5))
+        Ok(_)  => test.fail("nine characters cannot end in a byte")
+        Err(e) => test.assert_eq_str(totperr.code(e), "secret-truncated")
+
+    test.case("and the allocating form refuses the group of three")
+    match totpbase32.decode("MZXW6YTBOIV")
+        Ok(_)  => test.fail("eleven characters is a group of three")
+        Err(e) => test.assert_eq_str(totperr.code(e), "secret-truncated")
+
+@test
+fn test_every_refusal_says_its_own_line_and_its_class() [io]
+    // One arm of `message` and one arm of each class predicate per
+    // case: the arms the three suites beside this one never reach.
+    test.case("a character outside the alphabet names itself and where")
+    let e1 = TotpSecretNotBase32(at: 3, found: "1")
+    test.assert(str.contains(e1.message(), "`1`"))
+    test.assert(str.contains(e1.message(), "3"))
+    test.assert(totperr.is_config_fault(e1))
+
+    test.case("an empty secret says what the danger is")
+    test.assert(str.contains(TotpSecretEmpty.message(), "empty"))
+
+    test.case("a short trailing group says how short, as a configuration fault")
+    let e2 = TotpSecretTruncated(len: 1)
+    test.assert(str.contains(e2.message(), "1"))
+    test.assert(totperr.is_config_fault(e2))
+
+    test.case("a wrong buffer names both numbers")
+    let e3 = TotpBufferWrong(len: 3, want: 6)
+    test.assert(str.contains(e3.message(), "3"))
+    test.assert(str.contains(e3.message(), "6"))
+
+    test.case("a digit count outside 6 to 8 says the range")
+    test.assert(str.contains(TotpDigitsOutOfRange(digits: 9, lo: 6, hi: 8).message(), "9"))
+
+    test.case("a step that is not positive names it, as a programming fault")
+    let e4 = TotpStepNotPositive(step: 0)
+    test.assert(str.contains(e4.message(), "0"))
+    test.assert(totperr.is_program_fault(e4))
+
+    test.case("a negative window names both directions")
+    test.assert(str.contains(TotpWindowNegative(steps_back: -1, steps_ahead: -2).message(), "-1"))
+
+    test.case("a code of the wrong length names both lengths")
+    test.assert(str.contains(TotpCodeWrongLength(len: 5, want: 6).message(), "5"))
+
+    test.case("a character that is not a digit names itself, as the user's fault")
+    let e5 = TotpCodeNotDigits(at: 2, found: "x")
+    test.assert(str.contains(e5.message(), "`x`"))
+    test.assert(totperr.is_user_fault(e5))
+
+    test.case("an unreadable URI names the part it stopped in")
+    test.assert(str.contains(TotpUriMalformed(at: 10, what: "type").message(), "type"))
+
+    test.case("an algorithm nobody implements carries the text as written")
+    let e6 = TotpUriUnknownAlgorithm(found: "SHA3-256")
+    test.assert(str.contains(e6.message(), "SHA3-256"))
+    test.assert(totperr.is_config_fault(e6))
+
+@test
+fn test_hotp_refuses_a_digest_and_a_digit_count_it_cannot_use() [io]
+    test.case("a digest under twenty bytes has no room for the offset")
+    match totphotp.dynamic_truncate(bytes.zeros(15))
+        Ok(_)  => test.fail("fifteen bytes is shorter than the shortest digest")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "buffer-wrong")
+            test.assert_eq(totperr.offset(e), -1)
+
+    test.case("a digit count no constructor would build still refuses a code")
+    let bad = TotpParams {
+        algorithm: TotpAlgSha1,
+        digits: 5,
+        step_seconds: 30,
+        t0_seconds: 0,
+        window: totpparams.exact_window() }
+    match totphotp.verify_at(a_secret(), 0, "12345", bad)
+        Ok(_)  => test.fail("five characters is not a code this package writes")
+        Err(e) => test.assert_eq_str(totperr.code(e), "digits-out-of-range")
+
+@test
+fn test_a_hand_built_parameter_set_is_checked_where_a_constructor_cannot_be() [io]
+    // Every constructor refuses these shapes, so the only way to hold
+    // one is to write the struct — which is what a service decoding
+    // its own configuration file does, and why `check` exists.
+    test.case("a negative window reached through `params` anyway")
+    let w = TotpWindow { steps_back: -1, steps_ahead: 0 }
+    match totpparams.params(TotpAlgSha1, 6, 30, 0, w)
+        Ok(_)  => test.fail("a window cannot count backwards past zero")
+        Err(e) => test.assert_eq_str(totperr.code(e), "window-negative")
+
+    test.case("check names the first unusable field: the digits")
+    let d = TotpParams {
+        algorithm: TotpAlgSha1,
+        digits: 9,
+        step_seconds: 30,
+        t0_seconds: 0,
+        window: totpparams.exact_window() }
+    match totpparams.check(d)
+        None    => test.fail("nine digits is not a code length")
+        Some(e) => test.assert_eq_str(totperr.code(e), "digits-out-of-range")
+
+    test.case("then the step")
+    let s = TotpParams {
+        algorithm: TotpAlgSha1,
+        digits: 6,
+        step_seconds: 0,
+        t0_seconds: 0,
+        window: totpparams.exact_window() }
+    match totpparams.check(s)
+        None    => test.fail("a step of zero has no counter to divide by")
+        Some(e) => test.assert_eq_str(totperr.code(e), "step-not-positive")
+
+    test.case("and then the window")
+    let w2 = TotpParams {
+        algorithm: TotpAlgSha1,
+        digits: 6,
+        step_seconds: 30,
+        t0_seconds: 0,
+        window: TotpWindow { steps_back: 0, steps_ahead: -1 } }
+    match totpparams.check(w2)
+        None    => test.fail("a window cannot count forwards past zero")
+        Some(e) => test.assert_eq_str(totperr.code(e), "window-negative")
+
+@test
+fn test_the_counter_floor_divides_before_the_epoch() [io]
+    // RFC 6238 § 4.2's division is a floor, and `/` rounds toward
+    // zero: without the correction the second before T0 and 23:59:59
+    // of the day before it would fall in one step.
+    let p = totpparams.default_params()
+
+    test.case("the second before the epoch is in step -1, not step 0")
+    test.assert_eq(totptime.counter_at(p, totptime.instant(-1)), -1)
+
+    test.case("and the step boundary before it is still -1, not 0")
+    test.assert_eq(totptime.counter_at(p, totptime.instant(-30)), -1)
+
+    test.case("one second further back is -2")
+    test.assert_eq(totptime.counter_at(p, totptime.instant(-31)), -2)
+
+    test.case("so the countdown is inside 1 to step_seconds there too")
+    test.assert_eq(totptime.seconds_remaining(p, totptime.instant(-1)), 1)
+    test.assert_eq(totptime.seconds_remaining(p, totptime.instant(-30)), 30)
+    test.assert_eq(totptime.seconds_remaining(p, totptime.instant(-31)), 1)
+
+@test
+fn test_totp_and_verify_check_the_parameters_before_the_hmac() [io]
+    let bad = TotpParams {
+        algorithm: TotpAlgSha1,
+        digits: 6,
+        step_seconds: 0,
+        t0_seconds: 0,
+        window: totpparams.exact_window() }
+
+    test.case("totp refuses a step of zero rather than dividing by it")
+    match totptime.totp(a_secret(), bad, totptime.instant(59))
+        Ok(_)  => test.fail("a step of zero has no counter")
+        Err(e) => test.assert_eq_str(totperr.code(e), "step-not-positive")
+
+    test.case("verify checks the same set first")
+    match totptime.verify(a_secret(), "287082", bad, totptime.instant(59))
+        Ok(_)  => test.fail("a step of zero has no counter")
+        Err(e) => test.assert_eq_str(totperr.code(e), "step-not-positive")
+
+    test.case("and a code of the wrong shape is refused before any HMAC")
+    match totptime.verify(a_secret(), "28708", totpparams.default_params(),
+                          totptime.instant(59))
+        Ok(_)  => test.fail("five characters is not a six-digit code")
+        Err(e) => test.assert_eq_str(totperr.code(e), "code-wrong-length")
+
+@test
+fn test_a_refusal_points_at_the_part_of_the_uri_it_stopped_in() [io]
+    // The offsets are positions in the string above: `otpauth://` is
+    // ten bytes, the host starts at 10, the path at 14, and the query
+    // at 21 — so `digits`'s value sits at 21 + 39 + 8 = 68, after the
+    // 39-byte secret parameter.
+    test.case("a URI the URL parser cannot read stops at the scheme")
+    match totpuri.parse("otpauth://tot p/alice?" + secret_param())
+        Ok(_)  => test.fail("a space in the host is not a URI")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "uri-malformed")
+            test.assert_eq(totperr.offset(e), 0)
+
+    test.case("a type that is neither totp nor hotp stops in the type")
+    match totpuri.parse("otpauth://foo/alice?" + secret_param())
+        Ok(_)  => test.fail("only the two types are enrolment URIs")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "uri-malformed")
+            test.assert_eq(totperr.offset(e), 10)
+
+    test.case("an empty label stops where the label begins")
+    match totpuri.parse("otpauth://totp/?" + secret_param())
+        Ok(_)  => test.fail("a label is required")
+        Err(e) => test.assert_eq(totperr.offset(e), 14)
+
+    test.case("and no path at all is the same refusal at the same offset")
+    match totpuri.parse("otpauth://totp?" + secret_param())
+        Ok(_)  => test.fail("a label is required")
+        Err(e) => test.assert_eq(totperr.offset(e), 14)
+
+    test.case("a URI with no secret stops in the secret, which has no offset")
+    match totpuri.parse("otpauth://totp/alice?issuer=Example")
+        Ok(_)  => test.fail("there is nothing without a secret")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "uri-malformed")
+            test.assert_eq(totperr.offset(e), -1)
+
+    test.case("a digit count out of range stops at the value, not the key")
+    match totp_uri_with("&digits=5")
+        Ok(_)  => test.fail("five digits is not a code length")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "uri-malformed")
+            test.assert_eq(totperr.offset(e), 68)
+
+    test.case("a period of zero stops at its own value")
+    match totp_uri_with("&period=0")
+        Ok(_)  => test.fail("a step of zero has no counter")
+        Err(e) => test.assert_eq(totperr.offset(e), 68)
+
+    test.case("a counter-based URI carries its counter and writes no period")
+    match hotp_uri_with("&counter=7")
+        Err(e) => test.fail(e.message())
+        Ok(u)  =>
+            test.assert(totpuri.is_hotp(u))
+            test.assert_eq(u.counter, 7)
+            test.assert_eq(u.params.step_seconds,
+                           totpparams.TOTP_STEP_DEFAULT_SECONDS)
+            test.assert(str.starts_with(totpuri.format(u), "otpauth://hotp/"))
+            test.assert(str.contains(totpuri.format(u), "counter=7"))
+            test.assert(not str.contains(totpuri.format(u), "period="))
+
+    test.case("an HOTP URI without a counter has no value to point at")
+    match hotp_uri_with("")
+        Ok(_)  => test.fail("a counter-based URI starts nowhere without one")
+        Err(e) =>
+            test.assert_eq_str(totperr.code(e), "uri-malformed")
+            test.assert_eq(totperr.offset(e), -1)
+
+    test.case("and a negative counter is the sentinel that means not counter-based")
+    match hotp_uri_with("&counter=-2")
+        Ok(_)  => test.fail("a counter counts up from zero")
+        Err(e) => test.assert_eq(totperr.offset(e), 69)

@@ -34,6 +34,8 @@
 // package that published one `window: Int` would be deciding for
 // every deployment that the two are the same size.
 
+use totpalg
+
 // What a code depends on besides the secret and the time.
 //
 // A plain struct rather than a `@value` one because it is a `Result`
@@ -129,7 +131,10 @@ pub const TOTP_T0_DEFAULT = 0
 //         Err(e) => println(totperr.code(e))
 // ```
 pub fn window(steps_back: Int, steps_ahead: Int) -> Result<TotpWindow, TotpError> []
-    todo("totp-nv.totpparams.window")
+    if steps_back < 0 or steps_ahead < 0
+        Err(TotpWindowNegative(steps_back: steps_back, steps_ahead: steps_ahead))
+    else
+        Ok(TotpWindow { steps_back: steps_back, steps_ahead: steps_ahead })
 
 // The window this package uses when nobody chooses one: one step
 // back, none forward.
@@ -146,7 +151,7 @@ pub fn window(steps_back: Int, steps_ahead: Int) -> Result<TotpWindow, TotpError
 //     println("${totpparams.default_window().steps_ahead}")   // 0
 // ```
 pub fn default_window() -> TotpWindow []
-    todo("totp-nv.totpparams.default_window")
+    TotpWindow { steps_back: 1, steps_ahead: 0 }
 
 // The window that accepts the current step and nothing else.
 //
@@ -160,7 +165,7 @@ pub fn default_window() -> TotpWindow []
 //     println("${totpparams.exact_window().steps_back}")   // 0
 // ```
 pub fn exact_window() -> TotpWindow []
-    todo("totp-nv.totpparams.exact_window")
+    TotpWindow { steps_back: 0, steps_ahead: 0 }
 
 // How many steps a window admits in total: back plus ahead plus the
 // current one.
@@ -176,7 +181,8 @@ pub fn exact_window() -> TotpWindow []
 //     println("${totpparams.window_steps(totpparams.default_window())}")   // 2
 // ```
 pub fn window_steps(w: TotpWindow) -> Int []
-    todo("totp-nv.totpparams.window_steps")
+    // The steps either side, and the one the clock is at.
+    w.steps_back + w.steps_ahead + 1
 
 // The parameters a deployment uses when it chooses nothing: SHA-1,
 // six digits, a thirty second step, T0 at the Unix epoch, and one
@@ -195,7 +201,12 @@ pub fn window_steps(w: TotpWindow) -> Int []
 //     println(totpalg.alg_name(p.algorithm))             // SHA1
 // ```
 pub fn default_params() -> TotpParams []
-    todo("totp-nv.totpparams.default_params")
+    TotpParams {
+        algorithm: default_algorithm(),
+        digits: TOTP_DIGITS_DEFAULT,
+        step_seconds: TOTP_STEP_DEFAULT_SECONDS,
+        t0_seconds: TOTP_T0_DEFAULT,
+        window: default_window() }
 
 // Parameters from all five values, checked.
 //
@@ -219,7 +230,19 @@ pub fn default_params() -> TotpParams []
 // ```
 pub fn params(algorithm: TotpAlgorithm, digits: Int, step_seconds: Int, t0_seconds: Int,
               w: TotpWindow) -> Result<TotpParams, TotpError> []
-    todo("totp-nv.totpparams.params")
+    if digits < TOTP_DIGITS_MIN or digits > TOTP_DIGITS_MAX
+        Err(TotpDigitsOutOfRange(digits: digits, lo: TOTP_DIGITS_MIN, hi: TOTP_DIGITS_MAX))
+    else if step_seconds < 1
+        Err(TotpStepNotPositive(step: step_seconds))
+    else if w.steps_back < 0 or w.steps_ahead < 0
+        Err(TotpWindowNegative(steps_back: w.steps_back, steps_ahead: w.steps_ahead))
+    else
+        Ok(TotpParams {
+            algorithm: algorithm,
+            digits: digits,
+            step_seconds: step_seconds,
+            t0_seconds: t0_seconds,
+            window: w })
 
 // The same parameters with a different algorithm.
 //
@@ -235,7 +258,12 @@ pub fn params(algorithm: TotpAlgorithm, digits: Int, step_seconds: Int, t0_secon
 //     println(totpalg.alg_name(p.algorithm))   // SHA256
 // ```
 pub fn with_algorithm(p: TotpParams, a: TotpAlgorithm) -> TotpParams []
-    todo("totp-nv.totpparams.with_algorithm")
+    TotpParams {
+        algorithm: a,
+        digits: p.digits,
+        step_seconds: p.step_seconds,
+        t0_seconds: p.t0_seconds,
+        window: p.window }
 
 // The same parameters with a different digit count.
 //
@@ -251,7 +279,10 @@ pub fn with_algorithm(p: TotpParams, a: TotpAlgorithm) -> TotpParams []
 //         Err(e) => println(totperr.code(e))   // digits-out-of-range
 // ```
 pub fn with_digits(p: TotpParams, digits: Int) -> Result<TotpParams, TotpError> []
-    todo("totp-nv.totpparams.with_digits")
+    // Through `params`, so the range check has one definition and a
+    // `with_digits` of 9 cannot be refused somewhere else than a
+    // `params` of 9 is.
+    params(p.algorithm, digits, p.step_seconds, p.t0_seconds, p.window)
 
 // The same parameters with a different step length, in seconds.
 //
@@ -267,7 +298,7 @@ pub fn with_digits(p: TotpParams, digits: Int) -> Result<TotpParams, TotpError> 
 //         Err(e) => println(totperr.code(e))
 // ```
 pub fn with_step(p: TotpParams, step_seconds: Int) -> Result<TotpParams, TotpError> []
-    todo("totp-nv.totpparams.with_step")
+    params(p.algorithm, p.digits, step_seconds, p.t0_seconds, p.window)
 
 // The same parameters counting steps from a different epoch.
 //
@@ -283,7 +314,12 @@ pub fn with_step(p: TotpParams, step_seconds: Int) -> Result<TotpParams, TotpErr
 //     println("${totpparams.with_t0(totpparams.default_params(), 60).t0_seconds}")
 // ```
 pub fn with_t0(p: TotpParams, t0_seconds: Int) -> TotpParams []
-    todo("totp-nv.totpparams.with_t0")
+    TotpParams {
+        algorithm: p.algorithm,
+        digits: p.digits,
+        step_seconds: p.step_seconds,
+        t0_seconds: t0_seconds,
+        window: p.window }
 
 // The same parameters with a different verification window.
 //
@@ -298,7 +334,12 @@ pub fn with_t0(p: TotpParams, t0_seconds: Int) -> TotpParams []
 //     println("${p.window.steps_back}")   // 0
 // ```
 pub fn with_window(p: TotpParams, w: TotpWindow) -> TotpParams []
-    todo("totp-nv.totpparams.with_window")
+    TotpParams {
+        algorithm: p.algorithm,
+        digits: p.digits,
+        step_seconds: p.step_seconds,
+        t0_seconds: p.t0_seconds,
+        window: w }
 
 // Whether these parameters are usable, and why not.
 //
@@ -319,4 +360,11 @@ pub fn with_window(p: TotpParams, w: TotpWindow) -> TotpParams []
 //         None    => println("usable")    // usable
 // ```
 pub fn check(p: TotpParams) -> ?TotpError []
-    todo("totp-nv.totpparams.check")
+    if p.digits < TOTP_DIGITS_MIN or p.digits > TOTP_DIGITS_MAX
+        Some(TotpDigitsOutOfRange(digits: p.digits, lo: TOTP_DIGITS_MIN, hi: TOTP_DIGITS_MAX))
+    else if p.step_seconds < 1
+        Some(TotpStepNotPositive(step: p.step_seconds))
+    else if p.window.steps_back < 0 or p.window.steps_ahead < 0
+        Some(TotpWindowNegative(steps_back: p.window.steps_back, steps_ahead: p.window.steps_ahead))
+    else
+        None

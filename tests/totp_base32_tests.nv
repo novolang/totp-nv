@@ -1,9 +1,6 @@
 // tests/totp_base32_tests.nv — base32 against RFC 4648 § 10, and the
 // three things this package does differently from the RFC's default.
 //
-// They COMPILE today and they FAIL at run, on the `not implemented:
-// totp-nv.totpbase32.<fn>` panic that is each body.
-//
 // WHERE THE VECTORS COME FROM.  RFC 4648 § 10 prints the base32
 // encoding of the seven strings "", "f", "fo", "foo", "foob", "fooba"
 // and "foobar".  They are the vectors every base32 in the world is

@@ -40,6 +40,9 @@
 // the caller who has a database; `is_replay` is the comparison, so
 // the rule is a function and not a paragraph.
 
+use totphotp
+use totpparams
+
 // A point in time, as seconds since the Unix epoch.
 //
 // A plain struct rather than a `@value` one because it is carried
@@ -76,7 +79,7 @@ pub struct TotpInstant
 //     println("${totptime.unix_seconds(now)}")   // 1111111109
 // ```
 pub fn instant(unix_seconds: Int) -> TotpInstant []
-    todo("totp-nv.totptime.instant")
+    TotpInstant { seconds: unix_seconds }
 
 // The Unix timestamp an instant holds.
 //
@@ -87,7 +90,7 @@ pub fn instant(unix_seconds: Int) -> TotpInstant []
 //     println("${totptime.unix_seconds(totptime.instant(0))}")   // 0
 // ```
 pub fn unix_seconds(t: TotpInstant) -> Int []
-    todo("totp-nv.totptime.unix_seconds")
+    t.seconds
 
 // An instant a number of seconds later, or earlier for a negative
 // number.
@@ -104,7 +107,22 @@ pub fn unix_seconds(t: TotpInstant) -> Int []
 //     // 60
 // ```
 pub fn plus(t: TotpInstant, seconds: Int) -> TotpInstant []
-    todo("totp-nv.totptime.plus")
+    TotpInstant { seconds: t.seconds + seconds }
+
+// Floor division of `a` by a positive `b`.
+//
+// `/` truncates toward zero, so it rounds a negative quotient up:
+// -1 / 30 is 0 where RFC 6238 § 4.2's `T = (unix - T0) / X` means -1.
+// That would put 23:59:59 and midnight of the previous day in one step,
+// and would make `seconds_remaining` answer 31 for an instant before
+// T0.  The divisor is a step length, which is checked positive, so the
+// remainder only has to be tested against zero.
+fn div_floor(a: Int, b: Int) -> Int
+    let q = a / b
+    if a < 0 and a % b != 0
+        q - 1
+    else
+        q
 
 // The counter this instant falls in: `(unix_seconds - t0) / step`,
 // RFC 6238 § 4.2.
@@ -126,7 +144,7 @@ pub fn plus(t: TotpInstant, seconds: Int) -> TotpInstant []
 //     println("${totptime.counter_at(p, totptime.instant(1111111109))}")   // 37037036
 // ```
 pub fn counter_at(p: TotpParams, t: TotpInstant) -> Int []
-    todo("totp-nv.totptime.counter_at")
+    div_floor(t.seconds - p.t0_seconds, p.step_seconds)
 
 // When a counter's step began: `t0 + counter * step`.
 //
@@ -142,7 +160,7 @@ pub fn counter_at(p: TotpParams, t: TotpInstant) -> Int []
 //     println("${totptime.unix_seconds(totptime.step_start(p, 1))}")   // 30
 // ```
 pub fn step_start(p: TotpParams, counter: Int) -> TotpInstant []
-    todo("totp-nv.totptime.step_start")
+    TotpInstant { seconds: p.t0_seconds + counter * p.step_seconds }
 
 // How many seconds of this step remain after this instant: 1 to
 // `step_seconds`.
@@ -160,7 +178,12 @@ pub fn step_start(p: TotpParams, counter: Int) -> TotpInstant []
 //     println("${totptime.seconds_remaining(p, totptime.instant(59))}")   // 1
 // ```
 pub fn seconds_remaining(p: TotpParams, t: TotpInstant) -> Int []
-    todo("totp-nv.totptime.seconds_remaining")
+    // Where the step began, and how much of it is left.  The floor in
+    // `counter_at` is what keeps the answer in 1..step_seconds for an
+    // instant before T0 as well as after it.
+    let at = counter_at(p, t)
+    let start = unix_seconds(step_start(p, at))
+    start + p.step_seconds - t.seconds
 
 // The TOTP code for this secret at this instant.
 //
@@ -184,7 +207,12 @@ pub fn seconds_remaining(p: TotpParams, t: TotpInstant) -> Int []
 //                 Err(e) => println(e.message())
 // ```
 pub fn totp(s: TotpSecret, p: TotpParams, t: TotpInstant) -> Result<Str, TotpError> []
-    todo("totp-nv.totptime.totp")
+    // The parameters are checked because `counter_at` divides by the
+    // step, and an unusable step must come back as a refusal rather
+    // than as a trap.
+    match totpparams.check(p)
+        Some(e) => Err(e)
+        None    => totphotp.hotp(s, counter_at(p, t), p)
 
 // What a verification found.
 //
@@ -259,7 +287,35 @@ pub struct TotpMatch
 // ```
 pub fn verify(s: TotpSecret, code: Str, p: TotpParams,
               t: TotpInstant) -> Result<TotpMatch, TotpError> []
-    todo("totp-nv.totptime.verify")
+    match totpparams.check(p)
+        Some(e) => Err(e)
+        None    =>
+            match totphotp.check_code(code, p)
+                Some(e) => Err(e)
+                None    =>
+                    let at = counter_at(p, t)
+                    let w = p.window
+                    var hit = -1
+                    var offset = 0
+                    // Every step in the window is computed and
+                    // compared, and the loop does not stop at the
+                    // match: a verification that returned as soon as
+                    // one code matched would take less time for the
+                    // codes nearer the current step, and that is a
+                    // clock an attacker can read.
+                    for k in 0..totpparams.window_steps(w)
+                        let counter = at - w.steps_back + k
+                        // The shape was checked above, so this cannot
+                        // answer an error; `!` returns it if it does.
+                        let ok = totphotp.verify_at(s, counter, code, p)!
+                        if ok and hit < 0
+                            hit = counter
+                            offset = counter - at
+                    Ok(TotpMatch {
+                        matched: hit >= 0,
+                        counter: hit,
+                        offset_steps: offset,
+                        at_counter: at })
 
 // The answer that nothing matched, at this instant.
 //
@@ -275,7 +331,15 @@ pub fn verify(s: TotpSecret, code: Str, p: TotpParams,
 //     println("${m.matched} ${m.counter}")   // false -1
 // ```
 pub fn no_match(t: TotpInstant) -> TotpMatch []
-    todo("totp-nv.totptime.no_match")
+    // Nothing is known about the parameters a caller's own short
+    // circuit was enforcing, so `at_counter` is the counter of this
+    // package's defaults: the thirty second step is assumed.
+    let at = counter_at(totpparams.default_params(), t)
+    TotpMatch {
+        matched: false,
+        counter: -1,
+        offset_steps: 0,
+        at_counter: at }
 
 // Whether this match is a code the account has already used.
 //
@@ -296,4 +360,7 @@ pub fn no_match(t: TotpInstant) -> TotpMatch []
 //     println("${totptime.is_replay(m, -1)}")   // false
 // ```
 pub fn is_replay(m: TotpMatch, last_accepted: Int) -> Bool []
-    todo("totp-nv.totptime.is_replay")
+    // A match at or below the stored counter has been used.  Nothing
+    // that did not match is a replay, and -1 is an account that has
+    // never verified.
+    m.matched and last_accepted >= 0 and m.counter <= last_accepted

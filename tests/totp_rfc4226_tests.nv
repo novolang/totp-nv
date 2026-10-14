@@ -1,11 +1,5 @@
 // tests/totp_rfc4226_tests.nv — HOTP against RFC 4226 Appendix D.
 //
-// They COMPILE today and they FAIL at run, with `not implemented:
-// totp-nv.<module>.<fn>` from the `todo()` that is each body.  That is
-// the expected state of an interface release: the compiler has checked
-// every signature, every type and every effect row, and nothing else
-// has been checked because there is nothing else yet.
-//
 // WHERE THE VECTORS COME FROM.  RFC 4226 Appendix D prints three
 // columns for the ASCII secret "12345678901234567890" at counters 0 to
 // 9: the intermediate HMAC-SHA-1, the decimal value dynamic truncation
